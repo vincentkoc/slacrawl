@@ -1,0 +1,26 @@
+version = 1
+workspace_id = ""
+db_path = "~/.slacrawl/slacrawl.db"
+cache_dir = "~/.slacrawl/cache"
+log_dir = "~/.slacrawl/logs"
+
+[slack.bot]
+token_env = "SLACK_BOT_TOKEN"
+
+[slack.app]
+token_env = "SLACK_APP_TOKEN"
+
+[slack.user]
+token_env = "SLACK_USER_TOKEN"
+
+[slack.desktop]
+enabled = true
+path = "~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack"
+
+[sync]
+concurrency = 4
+repair_every = "30m"
+full_history = true
+
+[search]
+default_mode = "fts"
