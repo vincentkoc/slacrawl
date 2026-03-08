@@ -64,7 +64,7 @@ jobs:
             end
 
             test do
-              assert_match "slacrawl commands", shell_output("#{bin}/slacrawl --help")
+              assert_match "Usage of slacrawl:", shell_output("#{bin}/slacrawl --help", 1)
             end
           end
           EOF
