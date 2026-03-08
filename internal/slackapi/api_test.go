@@ -189,6 +189,52 @@ func TestSyncJoinsPublicChannelBeforeRetryingHistory(t *testing.T) {
 	require.Equal(t, "joined", joinState)
 }
 
+func TestSyncDefaultsToIncrementalHistoryWhenNotFull(t *testing.T) {
+	server := newRepairSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot: "xoxb-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+	client.now = func() time.Time { return time.Date(2026, 3, 8, 4, 0, 0, 0, time.UTC) }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	ctx := context.Background()
+	require.NoError(t, st.UpsertWorkspace(ctx, store.Workspace{
+		ID:        "T123",
+		Name:      "team",
+		RawJSON:   "{}",
+		UpdatedAt: client.now(),
+	}))
+	require.NoError(t, st.UpsertChannel(ctx, store.Channel{
+		ID:          "C123",
+		WorkspaceID: "T123",
+		Name:        "general",
+		Kind:        "public_channel",
+		RawJSON:     "{}",
+		UpdatedAt:   client.now(),
+	}))
+	require.NoError(t, st.UpsertMessage(ctx, store.Message{
+		ChannelID:      "C123",
+		TS:             "1710000000.000100",
+		WorkspaceID:    "T123",
+		UserID:         "U123",
+		Text:           "existing root",
+		NormalizedText: "existing root",
+		SourceRank:     2,
+		SourceName:     SourceBot,
+		RawJSON:        "{}",
+		UpdatedAt:      client.now(),
+	}, nil))
+
+	err := client.Sync(ctx, st, SyncOptions{WorkspaceID: "T123", Channels: []string{"C123"}})
+	require.NoError(t, err)
+	require.Equal(t, "1709996400.000100", server.lastHistoryOldest("C123"))
+}
+
 func TestHandleEventsAPIEventUpdatesStore(t *testing.T) {
 	st := mustStore(t)
 	defer st.Close()

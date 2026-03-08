@@ -279,7 +279,7 @@ func (c *Client) fetchChannels(ctx context.Context, workspaceID string) ([]slack
 	}
 }
 
-func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, opts SyncOptions, now time.Time, userRepliesAvailable bool) error {
+func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, oldest string, now time.Time, userRepliesAvailable bool) error {
 	cursor := ""
 	joined := false
 	for {
@@ -287,7 +287,7 @@ func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, works
 			ChannelID: channel.ID,
 			Cursor:    cursor,
 			Limit:     200,
-			Oldest:    opts.Since,
+			Oldest:    oldest,
 		})
 		if err != nil {
 			if !joined && channelSkipReason(err) == "not_in_channel" && !channel.IsPrivate {
@@ -637,6 +637,10 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 	if len(channels) == 0 {
 		return nil
 	}
+	oldestByChannel, err := c.channelOldestByID(ctx, st, workspaceID, channels, opts)
+	if err != nil {
+		return err
+	}
 	workerCount := opts.Concurrency
 	if workerCount <= 0 {
 		workerCount = 1
@@ -649,7 +653,7 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 			if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
 				return err
 			}
-			if err := c.syncChannelMessages(ctx, st, workspaceID, channel, opts, now, userRepliesAvailable); err != nil {
+			if err := c.syncChannelMessages(ctx, st, workspaceID, channel, oldestByChannel[channel.ID], now, userRepliesAvailable); err != nil {
 				return err
 			}
 		}
@@ -673,7 +677,7 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 				cancel()
 				return
 			}
-			if err := c.syncChannelMessages(ctx, st, workspaceID, channel, opts, now, userRepliesAvailable); err != nil {
+			if err := c.syncChannelMessages(ctx, st, workspaceID, channel, oldestByChannel[channel.ID], now, userRepliesAvailable); err != nil {
 				select {
 				case errCh <- err:
 				default:
@@ -716,6 +720,32 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 		}
 		return nil
 	}
+}
+
+func (c *Client) channelOldestByID(ctx context.Context, st *store.Store, workspaceID string, channels []slack.Channel, opts SyncOptions) (map[string]string, error) {
+	out := make(map[string]string, len(channels))
+	if opts.Since != "" {
+		for _, channel := range channels {
+			out[channel.ID] = opts.Since
+		}
+		return out, nil
+	}
+	if opts.Full {
+		return out, nil
+	}
+
+	cursors, err := st.ChannelSyncCursors(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	latestByChannel := make(map[string]string, len(cursors))
+	for _, cursor := range cursors {
+		latestByChannel[cursor.ID] = cursor.LatestTS
+	}
+	for _, channel := range channels {
+		out[channel.ID] = repairOldest(latestByChannel[channel.ID], time.Hour)
+	}
+	return out, nil
 }
 
 func isChannelHistorySkipped(err error) bool {
