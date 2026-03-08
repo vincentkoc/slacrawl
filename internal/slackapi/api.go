@@ -31,6 +31,7 @@ type Diagnostics struct {
 	BotAuthTeamID     string `json:"bot_auth_team_id,omitempty"`
 	BotAuthTeam       string `json:"bot_auth_team,omitempty"`
 	UserAuthAvailable bool   `json:"user_auth_available"`
+	UserAuthError     string `json:"user_auth_error,omitempty"`
 	AppTailAvailable  bool   `json:"app_tail_available"`
 }
 
@@ -108,9 +109,13 @@ func (c *Client) Doctor(ctx context.Context) (Diagnostics, error) {
 	diag.BotAuthTeam = resp.Team
 	diag.AppTailAvailable = c.tokens.App != ""
 
-	if c.user != nil && c.userAuthAvailable(ctx) {
-		diag.UserAuthAvailable = true
-		diag.ThreadCoverage = "full"
+	if c.user != nil {
+		if _, err := c.authTest(ctx, c.user); err == nil {
+			diag.UserAuthAvailable = true
+			diag.ThreadCoverage = "full"
+		} else {
+			diag.UserAuthError = authErrorReason(err)
+		}
 	}
 	return diag, nil
 }
@@ -624,4 +629,11 @@ func (c *Client) userAuthAvailable(ctx context.Context) bool {
 	}
 	_, err := c.authTest(ctx, c.user)
 	return err == nil
+}
+
+func authErrorReason(err error) string {
+	if reason := channelSkipReason(err); reason != "" {
+		return reason
+	}
+	return err.Error()
 }

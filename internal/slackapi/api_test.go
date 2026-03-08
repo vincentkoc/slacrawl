@@ -115,6 +115,7 @@ func TestDoctorWithInvalidUserTokenDoesNotReportFullCoverage(t *testing.T) {
 	require.True(t, diag.UserConfigured)
 	require.False(t, diag.UserAuthAvailable)
 	require.Equal(t, "partial", diag.ThreadCoverage)
+	require.Equal(t, "invalid_auth", diag.UserAuthError)
 }
 
 func TestSyncSkipsChannelsTheBotCannotRead(t *testing.T) {
