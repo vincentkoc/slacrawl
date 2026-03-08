@@ -17,6 +17,7 @@ import (
 const schema = `
 pragma foreign_keys = on;
 pragma journal_mode = wal;
+pragma busy_timeout = 5000;
 
 create table if not exists workspaces (
   id text primary key,
@@ -238,6 +239,8 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, err

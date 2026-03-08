@@ -143,6 +143,27 @@ func TestSyncSkipsChannelsTheBotCannotRead(t *testing.T) {
 	require.Equal(t, "not_in_channel", reason)
 }
 
+func TestSyncUsesConfiguredConcurrencyForChannelHistory(t *testing.T) {
+	server := newConcurrentHistorySlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot: "xoxb-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	err := client.Sync(context.Background(), st, SyncOptions{Concurrency: 2})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, server.maxConcurrentHistory(), 2)
+
+	rows, err := st.Messages(context.Background(), "", "", 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+}
+
 func TestHandleEventsAPIEventUpdatesStore(t *testing.T) {
 	st := mustStore(t)
 	defer st.Close()
@@ -314,10 +335,12 @@ func TestRepairWorkspaceReconcilesIncrementalHistory(t *testing.T) {
 }
 
 type mockSlackServer struct {
-	server  *httptest.Server
-	mu      sync.Mutex
-	counts  map[string]int
-	lastOld map[string]string
+	server        *httptest.Server
+	mu            sync.Mutex
+	counts        map[string]int
+	lastOld       map[string]string
+	activeHistory int
+	maxHistory    int
 }
 
 type fakeSocketMode struct {
@@ -452,6 +475,42 @@ func newInvalidUserSlackServer(t *testing.T) *mockSlackServer {
 	return mock
 }
 
+func newConcurrentHistorySlackServer(t *testing.T) *mockSlackServer {
+	t.Helper()
+	mock := &mockSlackServer{counts: map[string]int{}, lastOld: map[string]string{}}
+	mock.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/auth.test":
+			_, _ = w.Write([]byte(`{"ok":true,"team":"Test Team","team_id":"T123","user":"bot","user_id":"Ubot","bot_id":"B123"}`))
+		case "/conversations.list":
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[
+				{"id":"C111","name":"one","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":false,"topic":{"value":""},"purpose":{"value":""}},
+				{"id":"C222","name":"two","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":true,"topic":{"value":""},"purpose":{"value":""}}
+			],"response_metadata":{"next_cursor":""}}`))
+		case "/conversations.history":
+			mock.mu.Lock()
+			mock.activeHistory++
+			if mock.activeHistory > mock.maxHistory {
+				mock.maxHistory = mock.activeHistory
+			}
+			mock.mu.Unlock()
+			time.Sleep(150 * time.Millisecond)
+			values := mustFormValues(r)
+			channel := values.Get("channel")
+			mock.mu.Lock()
+			mock.activeHistory--
+			mock.mu.Unlock()
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"ok":true,"messages":[{"type":"message","channel":"%s","user":"U123","text":"msg-%s","ts":"1710000000.000100"}],"response_metadata":{"next_cursor":""}}`, channel, channel)))
+		case "/users.list":
+			_, _ = w.Write([]byte(`{"ok":true,"members":[],"response_metadata":{"next_cursor":""}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return mock
+}
+
 func (m *mockSlackServer) Close() {
 	m.server.Close()
 }
@@ -474,6 +533,12 @@ func (m *mockSlackServer) calls(path string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.counts["/"+path]
+}
+
+func (m *mockSlackServer) maxConcurrentHistory() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.maxHistory
 }
 
 func mustStore(t *testing.T) *store.Store {

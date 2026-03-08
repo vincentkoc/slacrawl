@@ -24,6 +24,7 @@ type Options struct {
 	Channels    []string
 	Since       string
 	Full        bool
+	Concurrency int
 }
 
 type Summary struct {
@@ -41,6 +42,7 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, opts Options) 
 			Channels:    opts.Channels,
 			Since:       opts.Since,
 			Full:        opts.Full,
+			Concurrency: opts.Concurrency,
 		})
 	case SourceDesktop:
 		return syncDesktop(ctx, cfg, st)
@@ -50,6 +52,7 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, opts Options) 
 			Channels:    opts.Channels,
 			Since:       opts.Since,
 			Full:        opts.Full,
+			Concurrency: opts.Concurrency,
 		}); err != nil {
 			return summary, err
 		}

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -40,6 +41,7 @@ type SyncOptions struct {
 	Channels    []string
 	Since       string
 	Full        bool
+	Concurrency int
 }
 
 type Client struct {
@@ -154,18 +156,17 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 	for _, id := range opts.Channels {
 		allow[id] = struct{}{}
 	}
+	selectedChannels := make([]slack.Channel, 0, len(channels))
 	for _, channel := range channels {
 		if len(allow) > 0 {
 			if _, ok := allow[channel.ID]; !ok {
 				continue
 			}
 		}
-		if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
-			return err
-		}
-		if err := c.syncChannelMessages(ctx, st, workspaceID, channel, opts, now, userRepliesAvailable); err != nil {
-			return err
-		}
+		selectedChannels = append(selectedChannels, channel)
+	}
+	if err := c.syncChannels(ctx, st, workspaceID, selectedChannels, opts, now, userRepliesAvailable); err != nil {
+		return err
 	}
 
 	users, err := c.getUsers(ctx, c.bot)
@@ -370,11 +371,8 @@ func (c *Client) repairWorkspace(ctx context.Context, st *store.Store, workspace
 	}
 	now := c.now()
 	for _, channel := range channels {
-		if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
-			return err
-		}
 		repairSince := repairOldest(latestByChannel[channel.ID], time.Hour)
-		if err := c.syncChannelMessages(ctx, st, workspaceID, channel, SyncOptions{Since: repairSince}, now, c.userAuthAvailable(ctx)); err != nil {
+		if err := c.syncChannels(ctx, st, workspaceID, []slack.Channel{channel}, SyncOptions{Since: repairSince}, now, c.userAuthAvailable(ctx)); err != nil {
 			return err
 		}
 	}
@@ -608,6 +606,91 @@ func tickerChan(ticker *time.Ticker) <-chan time.Time {
 		return nil
 	}
 	return ticker.C
+}
+
+func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID string, channels []slack.Channel, opts SyncOptions, now time.Time, userRepliesAvailable bool) error {
+	if len(channels) == 0 {
+		return nil
+	}
+	workerCount := opts.Concurrency
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+	if workerCount > len(channels) {
+		workerCount = len(channels)
+	}
+	if workerCount == 1 {
+		for _, channel := range channels {
+			if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
+				return err
+			}
+			if err := c.syncChannelMessages(ctx, st, workspaceID, channel, opts, now, userRepliesAvailable); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	workCh := make(chan slack.Channel)
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	worker := func() {
+		defer wg.Done()
+		for channel := range workCh {
+			if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				cancel()
+				return
+			}
+			if err := c.syncChannelMessages(ctx, st, workspaceID, channel, opts, now, userRepliesAvailable); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				cancel()
+				return
+			}
+		}
+	}
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go worker()
+	}
+	for _, channel := range channels {
+		select {
+		case <-ctx.Done():
+			close(workCh)
+			wg.Wait()
+			select {
+			case err := <-errCh:
+				return err
+			default:
+				if ctx.Err() != nil && !errors.Is(ctx.Err(), context.Canceled) {
+					return ctx.Err()
+				}
+				return nil
+			}
+		case workCh <- channel:
+		}
+	}
+	close(workCh)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		if ctx.Err() != nil && !errors.Is(ctx.Err(), context.Canceled) {
+			return ctx.Err()
+		}
+		return nil
+	}
 }
 
 func isChannelHistorySkipped(err error) bool {

@@ -201,7 +201,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, jso
 	channels := fs.String("channels", "", "comma separated channel ids")
 	since := fs.String("since", "", "oldest slack ts or RFC3339 timestamp")
 	full := fs.Bool("full", false, "full sync")
-	_ = fs.Int("concurrency", cfg.Sync.Concurrency, "worker count")
+	concurrency := fs.Int("concurrency", cfg.Sync.Concurrency, "worker count")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -218,6 +218,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, jso
 		Channels:    csv(*channels),
 		Since:       *since,
 		Full:        *full,
+		Concurrency: *concurrency,
 	})
 	if err != nil {
 		return err
