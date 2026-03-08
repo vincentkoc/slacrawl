@@ -211,3 +211,32 @@ fs.writeFileSync(process.argv[1], v8.serialize(value));
 	require.Equal(t, "1710000001.000200", byTS["1710000002.000300"].ThreadTS)
 	require.Equal(t, "thread reply", byTS["1710000002.000300"].Text)
 }
+
+func TestInspectIncludesSnapshotDerivedDesktopSummaries(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "storage"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "Local Storage", "leveldb"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "IndexedDB", "https_app.slack.com_0.indexeddb.leveldb"), 0o755))
+
+	rootStateData, err := os.ReadFile(filepath.Join("..", "..", "testdata", "desktop", "root-state.json"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "storage", "root-state.json"), rootStateData, 0o644))
+
+	localDB, err := leveldb.OpenFile(filepath.Join(root, "Local Storage", "leveldb"), nil)
+	require.NoError(t, err)
+	require.NoError(t, localDB.Put([]byte("_https://app.slack.comlocalConfig_v2"), []byte(`{"teams":{"T111":{"id":"T111","name":"Team One","domain":"team-one","user_id":"U111"}}}`), nil))
+	require.NoError(t, localDB.Put([]byte("_https://app.slack.compersist-v1::T111::U111::drafts"), []byte(`{"unifiedDrafts":{"draft-1":{"id":"draft-1","client_draft_id":"draft-1","destinations":[{"channel_id":"C111"}],"ops":[{"insert":"draft body"}],"last_updated_ts":1710000001.000200}}}`), nil))
+	require.NoError(t, localDB.Close())
+
+	indexDB, err := leveldb.OpenFile(filepath.Join(root, "IndexedDB", "https_app.slack.com_0.indexeddb.leveldb"), &opt.Options{Comparer: indexedDBComparer{}})
+	require.NoError(t, err)
+	require.NoError(t, indexDB.Put([]byte("https_app.slack.com_0@1#objectStore-T111-U111"), []byte("A"), nil))
+	require.NoError(t, indexDB.Close())
+
+	source, err := Inspect(root)
+	require.NoError(t, err)
+	require.True(t, source.Available)
+	require.Equal(t, 1, source.Local.WorkspaceCount)
+	require.Equal(t, 1, source.Local.DraftCount)
+	require.Len(t, source.IndexedDB.ObjectStores, 1)
+}

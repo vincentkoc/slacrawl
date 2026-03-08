@@ -128,7 +128,7 @@ func (a *App) runDoctor(ctx context.Context, configPath string, jsonOut bool) er
 	}
 	desktop := slackdesktop.Source{Path: cfg.Slack.Desktop.Path, Available: false}
 	if cfg.Slack.Desktop.Enabled {
-		desktop, err = slackdesktop.Discover(cfg.Slack.Desktop.Path)
+		desktop, err = slackdesktop.Inspect(cfg.Slack.Desktop.Path)
 		if err != nil {
 			return err
 		}

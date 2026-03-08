@@ -206,6 +206,32 @@ func Discover(path string) (Source, error) {
 	return source, nil
 }
 
+func Inspect(path string) (Source, error) {
+	source, err := Discover(path)
+	if err != nil {
+		return Source{}, err
+	}
+	if !source.Available {
+		return source, nil
+	}
+
+	snapshot, err := SnapshotPath(path)
+	if err != nil {
+		return Source{}, err
+	}
+	defer os.RemoveAll(filepath.Dir(snapshot.Root))
+
+	extracted, err := Extract(snapshot.Root)
+	if err != nil {
+		return Source{}, err
+	}
+	source.Summary = extracted.RootState.Summary
+	source.Local = localSummary(extracted)
+	source.IndexedDB = extracted.IndexedDB
+	source.IndexedDB.DecodedStateCount = len(extracted.ReduxStates)
+	return source, nil
+}
+
 func SnapshotPath(path string) (Snapshot, error) {
 	root, err := os.MkdirTemp("", "slacrawl-desktop-*")
 	if err != nil {
