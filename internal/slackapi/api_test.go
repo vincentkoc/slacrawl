@@ -72,6 +72,31 @@ func TestSyncWithoutUserTokenMarksPartialCoverage(t *testing.T) {
 	require.Equal(t, "partial", value)
 }
 
+func TestSyncSkipsChannelsTheBotCannotRead(t *testing.T) {
+	server := newSkipChannelSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot: "xoxb-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	err := client.Sync(context.Background(), st, SyncOptions{})
+	require.NoError(t, err)
+
+	rows, err := st.Messages(context.Background(), "C222", "", 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "accessible message", rows[0].Text)
+
+	reason, err := st.GetSyncState(context.Background(), SourceBot, "channel_skip", "C111")
+	require.NoError(t, err)
+	require.Equal(t, "not_in_channel", reason)
+}
+
 func TestHandleEventsAPIEventUpdatesStore(t *testing.T) {
 	st := mustStore(t)
 	defer st.Close()
@@ -316,6 +341,38 @@ func newRepairSlackServer(t *testing.T) *mockSlackServer {
 			_, _ = w.Write([]byte(`{"ok":true,"has_more":false,"messages":[{"type":"message","subtype":"message_replied","channel":"C123","user":"U234","text":"thread repair","thread_ts":"1710000000.000100","ts":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
 		default:
 			_, _ = w.Write([]byte(`{"ok":true}`))
+		}
+	}))
+	return mock
+}
+
+func newSkipChannelSlackServer(t *testing.T) *mockSlackServer {
+	t.Helper()
+	mock := &mockSlackServer{counts: map[string]int{}, lastOld: map[string]string{}}
+	mock.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/auth.test":
+			_, _ = w.Write([]byte(`{"ok":true,"team":"Test Team","team_id":"T123","user":"bot","user_id":"Ubot","bot_id":"B123"}`))
+		case "/conversations.list":
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[
+				{"id":"C111","name":"private-ish","is_channel":true,"is_private":true,"is_archived":false,"is_shared":false,"is_general":false,"topic":{"value":""},"purpose":{"value":""}},
+				{"id":"C222","name":"general","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":true,"topic":{"value":"topic"},"purpose":{"value":"purpose"}}
+			],"response_metadata":{"next_cursor":""}}`))
+		case "/conversations.history":
+			values := mustFormValues(r)
+			switch values.Get("channel") {
+			case "C111":
+				_, _ = w.Write([]byte(`{"ok":false,"error":"not_in_channel"}`))
+			case "C222":
+				_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","channel":"C222","user":"U123","text":"accessible message","ts":"1710000000.000100"}],"response_metadata":{"next_cursor":""}}`))
+			default:
+				http.NotFound(w, r)
+			}
+		case "/users.list":
+			_, _ = w.Write([]byte(`{"ok":true,"members":[],"response_metadata":{"next_cursor":""}}`))
+		default:
+			http.NotFound(w, r)
 		}
 	}))
 	return mock

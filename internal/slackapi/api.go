@@ -286,6 +286,9 @@ func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, works
 			Oldest:    opts.Since,
 		})
 		if err != nil {
+			if isChannelHistorySkipped(err) {
+				return st.SetSyncState(ctx, SourceBot, "channel_skip", channel.ID, channelSkipReason(err))
+			}
 			return fmt.Errorf("channel %s history: %w", channel.ID, err)
 		}
 		for _, msg := range resp.Messages {
@@ -603,4 +606,17 @@ func tickerChan(ticker *time.Ticker) <-chan time.Time {
 		return nil
 	}
 	return ticker.C
+}
+
+func isChannelHistorySkipped(err error) bool {
+	reason := channelSkipReason(err)
+	return reason == "not_in_channel" || reason == "channel_not_found"
+}
+
+func channelSkipReason(err error) string {
+	var slackErr slack.SlackErrorResponse
+	if errors.As(err, &slackErr) && slackErr.Err != "" {
+		return slackErr.Err
+	}
+	return ""
 }
