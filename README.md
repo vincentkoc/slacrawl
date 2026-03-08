@@ -15,6 +15,7 @@ Use it in one of three ways:
 - discovers the configured workspace
 - syncs channels, users, and message history into SQLite
 - backfills thread replies when a user token is available
+- uses incremental API history sync by default and reserves `--full` for explicit backfills
 - maintains FTS5 search indexes for fast local text search
 - records structured mentions for direct querying
 - exposes read-only SQL for ad hoc analysis
@@ -69,7 +70,7 @@ export SLACK_USER_TOKEN="xoxp-..."
 
 bin/slacrawl init
 bin/slacrawl doctor
-bin/slacrawl sync --source api --full
+bin/slacrawl sync --source api
 bin/slacrawl search "incident"
 bin/slacrawl tail --repair-every 30m
 bin/slacrawl watch --desktop-every 5m
@@ -77,7 +78,8 @@ bin/slacrawl watch --desktop-every 5m
 
 Choose the path that matches your setup:
 
-- use `sync --source api --full` when you have Slack app credentials
+- use `sync --source api` for normal incremental syncs
+- use `sync --source api --full` only when you want a deliberate full backfill
 - use `sync --source desktop` when you want local desktop recovery only
 - use `watch` when you want desktop-local state to refresh into SQLite continuously
 

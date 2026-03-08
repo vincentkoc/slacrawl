@@ -146,7 +146,13 @@ desktop_refresh_every = "5m"
 
 ### `concurrency`
 
-Reserved for sync fan-out and future tuning. Keep the default unless there is a concrete reason to change it.
+Used by API sync to fan out channel history fetches across workers. Keep the default unless you have a reason to tune it for a specific workspace.
+
+Notes:
+
+- higher values increase API fan-out, not write parallelism inside SQLite
+- useful mainly for multi-channel API sync, not single-channel runs
+- `--concurrency` on the CLI overrides the config value for that run
 
 ## Recommended Profiles
 

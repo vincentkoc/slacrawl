@@ -153,6 +153,8 @@ Must check:
 - FTS presence
 - desktop-local source availability
 - whether thread coverage can be full or only partial
+- if a configured user token actually auths successfully
+- recent API channel skips and tail connection/repair state when present
 
 ### `tail`
 
@@ -207,13 +209,18 @@ Credential model:
 3. auth test
 4. fetch workspace metadata
 5. fetch channels
-6. fetch users
-7. backfill message history
-8. backfill thread replies when a user token is available
-9. normalize messages
-10. upsert canonical rows
-11. update FTS rows and mentions
-12. write checkpoints
+6. derive per-channel sync window:
+   - explicit `--since` wins
+   - `--full` disables incremental cutoffs
+   - otherwise reuse the latest stored per-channel timestamp with overlap
+7. fetch users
+8. backfill message history
+9. attempt public-channel join and retry once on `not_in_channel`
+10. backfill thread replies only when a user token is configured and successfully auths
+11. normalize messages
+12. upsert canonical rows
+13. update FTS rows and mentions
+14. write checkpoints, channel skips, and join attempts
 
 ### Desktop-local sync
 
@@ -224,6 +231,7 @@ Credential model:
 5. ingest supported desktop-local metadata:
    - workspace/user metadata from `localConfig_v2`
    - cached channel metadata, member profiles, and channel message history from IndexedDB redux persistence blobs when `node` is available
+   - cached thread roots and cached reply messages from IndexedDB redux persistence blobs when present
    - draft bodies and thread draft destinations
    - recent-channel hints
    - `conversations.mark` read markers

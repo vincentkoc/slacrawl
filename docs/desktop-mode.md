@@ -12,6 +12,7 @@ Today the desktop adapter can ingest:
 - cached public and private channel metadata
 - cached user/member profiles
 - cached channel message history recovered from IndexedDB redux persistence blobs
+- cached thread roots and cached thread replies recovered from IndexedDB redux persistence blobs when Slack Desktop has them
 - draft messages
 - read markers from local persisted API calls
 - custom status metadata
@@ -24,7 +25,6 @@ The desktop adapter intentionally does not use local desktop auth material for w
 Desktop mode is still partial in a few areas:
 
 - DM and MPIM ingestion is intentionally excluded from V1
-- thread reply recovery from cached desktop state is still incomplete
 - attachment blobs are not downloaded
 - background file/media caches are not indexed as searchable attachments
 
