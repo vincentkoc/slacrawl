@@ -32,7 +32,10 @@ type Summary struct {
 }
 
 func Run(ctx context.Context, cfg config.Config, st *store.Store, opts Options) (Summary, error) {
-	tokens := cfg.ResolveTokens()
+	return RunWithTokens(ctx, cfg, st, opts, cfg.ResolveTokens())
+}
+
+func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts Options, tokens config.Tokens) (Summary, error) {
 	summary := Summary{}
 
 	switch opts.Source {

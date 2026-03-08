@@ -195,6 +195,7 @@ type Status struct {
 }
 
 type MessageRow struct {
+	WorkspaceID    string `json:"workspace_id"`
 	ChannelID      string `json:"channel_id"`
 	TS             string `json:"ts"`
 	UserID         string `json:"user_id"`
@@ -205,6 +206,7 @@ type MessageRow struct {
 }
 
 type MentionRow struct {
+	WorkspaceID string `json:"workspace_id"`
 	ChannelID   string `json:"channel_id"`
 	TS          string `json:"ts"`
 	MentionType string `json:"mention_type"`
@@ -213,6 +215,7 @@ type MentionRow struct {
 }
 
 type UserRow struct {
+	WorkspaceID string `json:"workspace_id"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	RealName    string `json:"real_name"`
@@ -221,9 +224,10 @@ type UserRow struct {
 }
 
 type ChannelRow struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Kind string `json:"kind"`
+	WorkspaceID string `json:"workspace_id"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
 }
 
 type ChannelSyncCursor struct {
@@ -441,15 +445,17 @@ func (s *Store) Status(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
-func (s *Store) Search(ctx context.Context, query string, limit int) ([]MessageRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
-select m.channel_id, m.ts, m.user_id, m.text, m.normalized_text, m.thread_ts, m.subtype
+func (s *Store) Search(ctx context.Context, workspaceID string, query string, limit int) ([]MessageRow, error) {
+	sqlQuery := `
+select m.workspace_id, m.channel_id, m.ts, m.user_id, m.text, m.normalized_text, m.thread_ts, m.subtype
 from message_fts f
 join messages m on f.message_key = m.channel_id || '|' || m.ts
 where message_fts match ?
+  and (? = '' or m.workspace_id = ?)
 order by m.ts desc
 limit ?
-`, query, limit)
+`
+	rows, err := s.db.QueryContext(ctx, sqlQuery, query, workspaceID, workspaceID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -457,12 +463,16 @@ limit ?
 	return scanMessageRows(rows)
 }
 
-func (s *Store) Messages(ctx context.Context, channelID string, userID string, limit int) ([]MessageRow, error) {
+func (s *Store) Messages(ctx context.Context, workspaceID string, channelID string, userID string, limit int) ([]MessageRow, error) {
 	query := `
-select channel_id, ts, user_id, text, normalized_text, thread_ts, subtype
+select workspace_id, channel_id, ts, user_id, text, normalized_text, thread_ts, subtype
 from messages
 where 1=1`
 	args := []any{}
+	if workspaceID != "" {
+		query += ` and workspace_id = ?`
+		args = append(args, workspaceID)
+	}
 	if channelID != "" {
 		query += ` and channel_id = ?`
 		args = append(args, channelID)
@@ -481,17 +491,22 @@ where 1=1`
 	return scanMessageRows(rows)
 }
 
-func (s *Store) Mentions(ctx context.Context, target string, limit int) ([]MentionRow, error) {
+func (s *Store) Mentions(ctx context.Context, workspaceID string, target string, limit int) ([]MentionRow, error) {
 	query := `
-select channel_id, ts, mention_type, target_id, coalesce(display_text, '')
-from message_mentions
+select m.workspace_id, mm.channel_id, mm.ts, mm.mention_type, mm.target_id, coalesce(mm.display_text, '')
+from message_mentions mm
+join messages m on m.channel_id = mm.channel_id and m.ts = mm.ts
 where 1=1`
 	args := []any{}
+	if workspaceID != "" {
+		query += ` and m.workspace_id = ?`
+		args = append(args, workspaceID)
+	}
 	if target != "" {
-		query += ` and (target_id = ? or display_text like ?)`
+		query += ` and (mm.target_id = ? or mm.display_text like ?)`
 		args = append(args, target, "%"+target+"%")
 	}
-	query += ` order by ts desc limit ?`
+	query += ` order by mm.ts desc limit ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -502,7 +517,7 @@ where 1=1`
 	var out []MentionRow
 	for rows.Next() {
 		var row MentionRow
-		if err := rows.Scan(&row.ChannelID, &row.TS, &row.MentionType, &row.TargetID, &row.DisplayText); err != nil {
+		if err := rows.Scan(&row.WorkspaceID, &row.ChannelID, &row.TS, &row.MentionType, &row.TargetID, &row.DisplayText); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
@@ -544,14 +559,15 @@ func (s *Store) QueryReadOnly(ctx context.Context, query string) ([]map[string]a
 	return results, rows.Err()
 }
 
-func (s *Store) Users(ctx context.Context, query string, limit int) ([]UserRow, error) {
+func (s *Store) Users(ctx context.Context, workspaceID string, query string, limit int) ([]UserRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
-select id, name, coalesce(real_name, ''), coalesce(display_name, ''), coalesce(title, '')
+select workspace_id, id, name, coalesce(real_name, ''), coalesce(display_name, ''), coalesce(title, '')
 from users
-where (? = '' or id = ? or name like ? or real_name like ? or display_name like ?)
+where (? = '' or workspace_id = ?)
+  and (? = '' or id = ? or name like ? or real_name like ? or display_name like ?)
 order by name asc
 limit ?
-`, query, query, "%"+query+"%", "%"+query+"%", "%"+query+"%", limit)
+`, workspaceID, workspaceID, query, query, "%"+query+"%", "%"+query+"%", "%"+query+"%", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -559,7 +575,7 @@ limit ?
 	var out []UserRow
 	for rows.Next() {
 		var row UserRow
-		if err := rows.Scan(&row.ID, &row.Name, &row.RealName, &row.DisplayName, &row.Title); err != nil {
+		if err := rows.Scan(&row.WorkspaceID, &row.ID, &row.Name, &row.RealName, &row.DisplayName, &row.Title); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
@@ -567,14 +583,15 @@ limit ?
 	return out, rows.Err()
 }
 
-func (s *Store) Channels(ctx context.Context, query string, limit int) ([]ChannelRow, error) {
+func (s *Store) Channels(ctx context.Context, workspaceID string, query string, limit int) ([]ChannelRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
-select id, name, kind
+select workspace_id, id, name, kind
 from channels
-where (? = '' or id = ? or name like ?)
+where (? = '' or workspace_id = ?)
+  and (? = '' or id = ? or name like ?)
 order by name asc
 limit ?
-`, query, query, "%"+query+"%", limit)
+`, workspaceID, workspaceID, query, query, "%"+query+"%", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -582,7 +599,7 @@ limit ?
 	var out []ChannelRow
 	for rows.Next() {
 		var row ChannelRow
-		if err := rows.Scan(&row.ID, &row.Name, &row.Kind); err != nil {
+		if err := rows.Scan(&row.WorkspaceID, &row.ID, &row.Name, &row.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
@@ -682,7 +699,7 @@ func scanMessageRows(rows *sql.Rows) ([]MessageRow, error) {
 	var out []MessageRow
 	for rows.Next() {
 		var row MessageRow
-		if err := rows.Scan(&row.ChannelID, &row.TS, &row.UserID, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype); err != nil {
+		if err := rows.Scan(&row.WorkspaceID, &row.ChannelID, &row.TS, &row.UserID, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype); err != nil {
 			return nil, err
 		}
 		out = append(out, row)

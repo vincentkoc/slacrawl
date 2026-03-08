@@ -18,6 +18,7 @@ const (
 type Config struct {
 	Version     int          `toml:"version"`
 	WorkspaceID string       `toml:"workspace_id"`
+	Workspaces  []Workspace  `toml:"workspaces"`
 	DBPath      string       `toml:"db_path"`
 	CacheDir    string       `toml:"cache_dir"`
 	LogDir      string       `toml:"log_dir"`
@@ -31,6 +32,15 @@ type SlackConfig struct {
 	App     TokenConfig   `toml:"app"`
 	User    TokenConfig   `toml:"user"`
 	Desktop DesktopConfig `toml:"desktop"`
+}
+
+type Workspace struct {
+	ID           string      `toml:"id"`
+	Default      bool        `toml:"default"`
+	BotTokenEnv  string      `toml:"bot_token_env"`
+	AppTokenEnv  string      `toml:"app_token_env"`
+	UserTokenEnv string      `toml:"user_token_env"`
+	Slack        SlackConfig `toml:"slack"`
 }
 
 type TokenConfig struct {
@@ -155,6 +165,15 @@ func (c *Config) Normalize() error {
 		}
 		*candidate = expanded
 	}
+	for i := range c.Workspaces {
+		if strings.TrimSpace(c.Workspaces[i].ID) == "" {
+			return fmt.Errorf("workspaces[%d].id is required", i)
+		}
+		c.Workspaces[i].ID = strings.TrimSpace(c.Workspaces[i].ID)
+	}
+	if c.WorkspaceID == "" {
+		c.WorkspaceID = c.DefaultWorkspaceID()
+	}
 	return nil
 }
 
@@ -176,17 +195,132 @@ func ExpandPath(path string) (string, error) {
 }
 
 func (c Config) ResolveTokens() Tokens {
+	return resolveTokens(c.Slack)
+}
+
+func (c Config) ResolveTokensForWorkspace(workspaceID string) Tokens {
+	if workspaceID == "" {
+		return c.ResolveTokens()
+	}
+	if workspace, ok := c.Workspace(workspaceID); ok {
+		return Tokens{
+			Bot:  c.resolveWorkspaceToken(c.Slack.Bot, workspace, "bot"),
+			App:  c.resolveWorkspaceToken(c.Slack.App, workspace, "app"),
+			User: c.resolveWorkspaceToken(c.Slack.User, workspace, "user"),
+		}
+	}
+	return c.ResolveTokens()
+}
+
+func (c Config) Workspace(workspaceID string) (Workspace, bool) {
+	for _, workspace := range c.Workspaces {
+		if workspace.ID == workspaceID {
+			return workspace, true
+		}
+	}
+	return Workspace{}, false
+}
+
+func (c Config) DefaultWorkspaceID() string {
+	if strings.TrimSpace(c.WorkspaceID) != "" {
+		return strings.TrimSpace(c.WorkspaceID)
+	}
+	for _, workspace := range c.Workspaces {
+		if workspace.Default {
+			return workspace.ID
+		}
+	}
+	if len(c.Workspaces) == 1 {
+		return c.Workspaces[0].ID
+	}
+	return ""
+}
+
+func (c Config) WorkspaceIDs() []string {
+	ids := make([]string, 0, len(c.Workspaces))
+	for _, workspace := range c.Workspaces {
+		ids = append(ids, workspace.ID)
+	}
+	return ids
+}
+
+func resolveTokens(cfg SlackConfig) Tokens {
 	tokens := Tokens{}
-	if c.Slack.Bot.Enabled {
-		tokens.Bot = os.Getenv(c.Slack.Bot.TokenEnv)
+	if cfg.Bot.Enabled {
+		tokens.Bot = os.Getenv(cfg.Bot.TokenEnv)
 	}
-	if c.Slack.App.Enabled {
-		tokens.App = os.Getenv(c.Slack.App.TokenEnv)
+	if cfg.App.Enabled {
+		tokens.App = os.Getenv(cfg.App.TokenEnv)
 	}
-	if c.Slack.User.Enabled {
-		tokens.User = os.Getenv(c.Slack.User.TokenEnv)
+	if cfg.User.Enabled {
+		tokens.User = os.Getenv(cfg.User.TokenEnv)
 	}
 	return tokens
+}
+
+func (c Config) resolveWorkspaceToken(global TokenConfig, workspace Workspace, kind string) string {
+	if !global.Enabled {
+		return ""
+	}
+	for _, envName := range []string{
+		workspaceTokenEnvOverride(workspace, kind),
+		workspace.SlackTokenEnv(kind),
+		workspaceTokenEnvName(workspace.ID, kind),
+		global.TokenEnv,
+	} {
+		if envName == "" {
+			continue
+		}
+		if value := os.Getenv(envName); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (w Workspace) SlackTokenEnv(kind string) string {
+	switch kind {
+	case "bot":
+		return w.Slack.Bot.TokenEnv
+	case "app":
+		return w.Slack.App.TokenEnv
+	case "user":
+		return w.Slack.User.TokenEnv
+	default:
+		return ""
+	}
+}
+
+func workspaceTokenEnvOverride(workspace Workspace, kind string) string {
+	switch kind {
+	case "bot":
+		return workspace.BotTokenEnv
+	case "app":
+		return workspace.AppTokenEnv
+	case "user":
+		return workspace.UserTokenEnv
+	default:
+		return ""
+	}
+}
+
+func workspaceTokenEnvName(workspaceID string, kind string) string {
+	if workspaceID == "" {
+		return ""
+	}
+	return "SLACK_" + sanitizeEnvSegment(workspaceID) + "_" + strings.ToUpper(kind) + "_TOKEN"
+}
+
+func sanitizeEnvSegment(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(strings.TrimSpace(value)) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	return b.String()
 }
 
 func DetectDesktopPath() (string, error) {

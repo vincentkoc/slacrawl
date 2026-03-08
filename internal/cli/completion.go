@@ -37,12 +37,12 @@ var (
 		"sync":       {"--source", "--workspace", "--channels", "--since", "--full", "--concurrency", "--help", "-h"},
 		"tail":       {"--workspace", "--repair-every", "--help", "-h"},
 		"watch":      {"--desktop-every", "--help", "-h"},
-		"search":     {"--help", "-h"},
-		"messages":   {"--channel", "--author", "--limit", "--help", "-h"},
-		"mentions":   {"--target", "--limit", "--help", "-h"},
+		"search":     {"--workspace", "--help", "-h"},
+		"messages":   {"--workspace", "--channel", "--author", "--limit", "--help", "-h"},
+		"mentions":   {"--workspace", "--target", "--limit", "--help", "-h"},
 		"sql":        {"--help", "-h"},
-		"users":      {"--help", "-h"},
-		"channels":   {"--help", "-h"},
+		"users":      {"--workspace", "--help", "-h"},
+		"channels":   {"--workspace", "--help", "-h"},
 		"status":     {"--help", "-h"},
 		"completion": {"--help", "-h"},
 	}
@@ -129,11 +129,20 @@ _slacrawl()
         watch)
             COMPREPLY=( $(compgen -W "--desktop-every --help -h ${global_flags}" -- "${cur}") )
             ;;
+        search)
+            COMPREPLY=( $(compgen -W "--workspace --help -h ${global_flags}" -- "${cur}") )
+            ;;
         messages)
-            COMPREPLY=( $(compgen -W "--channel --author --limit --help -h ${global_flags}" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--workspace --channel --author --limit --help -h ${global_flags}" -- "${cur}") )
             ;;
         mentions)
-            COMPREPLY=( $(compgen -W "--target --limit --help -h ${global_flags}" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--workspace --target --limit --help -h ${global_flags}" -- "${cur}") )
+            ;;
+        users)
+            COMPREPLY=( $(compgen -W "--workspace --help -h ${global_flags}" -- "${cur}") )
+            ;;
+        channels)
+            COMPREPLY=( $(compgen -W "--workspace --help -h ${global_flags}" -- "${cur}") )
             ;;
         completion)
             COMPREPLY=( $(compgen -W "bash zsh --help -h ${global_flags}" -- "${cur}") )
@@ -191,11 +200,20 @@ _slacrawl() {
         watch)
           _arguments '--desktop-every[desktop refresh interval]:duration:'
           ;;
+        search)
+          _arguments '--workspace[workspace id]:workspace id:'
+          ;;
         messages)
-          _arguments '--channel[channel id]:channel id:' '--author[user id]:user id:' '--limit[row limit]:limit:'
+          _arguments '--workspace[workspace id]:workspace id:' '--channel[channel id]:channel id:' '--author[user id]:user id:' '--limit[row limit]:limit:'
           ;;
         mentions)
-          _arguments '--target[target id or label]:target:' '--limit[row limit]:limit:'
+          _arguments '--workspace[workspace id]:workspace id:' '--target[target id or label]:target:' '--limit[row limit]:limit:'
+          ;;
+        users)
+          _arguments '--workspace[workspace id]:workspace id:'
+          ;;
+        channels)
+          _arguments '--workspace[workspace id]:workspace id:'
           ;;
         completion)
           _values 'shell' bash zsh

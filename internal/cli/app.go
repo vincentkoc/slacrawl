@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vincentkoc/slacrawl/internal/config"
@@ -194,6 +195,10 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
+	workspaceAPI, err := a.workspaceDoctorReports(ctx, cfg)
+	if err != nil {
+		return err
+	}
 	desktop := slackdesktop.Source{Path: cfg.Slack.Desktop.Path, Available: false}
 	if cfg.Slack.Desktop.Enabled {
 		desktop, err = slackdesktop.Inspect(cfg.Slack.Desktop.Path)
@@ -202,6 +207,9 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 		}
 	}
 	threadCoverage := diag.ThreadCoverage
+	if len(workspaceAPI) > 0 {
+		threadCoverage = aggregateThreadCoverage(workspaceAPI)
+	}
 	if threadCoverage == "" {
 		threadCoverage = "partial"
 	}
@@ -236,6 +244,7 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 			"user_set":     cfg.ResolveTokens().User != "",
 		},
 		"slack_api":         diag,
+		"workspace_api":     workspaceAPI,
 		"desktop_source":    desktop,
 		"api_channel_skips": channelSkips,
 		"tail_state":        tailState,
@@ -286,14 +295,15 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 	}
 	defer st.Close()
 
-	summary, err := syncer.Run(ctx, cfg, st, syncer.Options{
+	runOptions := syncer.Options{
 		Source:      syncer.Source(*source),
 		WorkspaceID: coalesce(*workspaceID, cfg.WorkspaceID),
 		Channels:    csv(*channels),
 		Since:       *since,
 		Full:        *full,
 		Concurrency: *concurrency,
-	})
+	}
+	summary, err := a.runSyncTargets(ctx, cfg, st, runOptions)
 	if err != nil {
 		return err
 	}
@@ -313,7 +323,13 @@ func (a *App) runSearch(ctx context.Context, configPath string, args []string, f
 	if err != nil {
 		return err
 	}
-	if len(args) == 0 {
+	fs := flag.NewFlagSet("search", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	workspaceID := fs.String("workspace", "", "workspace id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
 		return errors.New("search query required")
 	}
 	st, err := store.Open(cfg.DBPath)
@@ -321,7 +337,7 @@ func (a *App) runSearch(ctx context.Context, configPath string, args []string, f
 		return err
 	}
 	defer st.Close()
-	results, err := st.Search(ctx, strings.Join(args, " "), 50)
+	results, err := st.Search(ctx, coalesce(*workspaceID, cfg.WorkspaceID), strings.Join(fs.Args(), " "), 50)
 	if err != nil {
 		return err
 	}
@@ -335,6 +351,7 @@ func (a *App) runMessages(ctx context.Context, configPath string, args []string,
 	}
 	fs := flag.NewFlagSet("messages", flag.ContinueOnError)
 	fs.SetOutput(a.Stderr)
+	workspaceID := fs.String("workspace", "", "workspace id")
 	channelID := fs.String("channel", "", "channel id")
 	userID := fs.String("author", "", "user id")
 	limit := fs.Int("limit", 50, "row limit")
@@ -346,7 +363,7 @@ func (a *App) runMessages(ctx context.Context, configPath string, args []string,
 		return err
 	}
 	defer st.Close()
-	results, err := st.Messages(ctx, *channelID, *userID, store.RequireLimit(*limit))
+	results, err := st.Messages(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, store.RequireLimit(*limit))
 	if err != nil {
 		return err
 	}
@@ -360,6 +377,7 @@ func (a *App) runMentions(ctx context.Context, configPath string, args []string,
 	}
 	fs := flag.NewFlagSet("mentions", flag.ContinueOnError)
 	fs.SetOutput(a.Stderr)
+	workspaceID := fs.String("workspace", "", "workspace id")
 	target := fs.String("target", "", "target id or label")
 	limit := fs.Int("limit", 50, "row limit")
 	if err := fs.Parse(args); err != nil {
@@ -370,7 +388,7 @@ func (a *App) runMentions(ctx context.Context, configPath string, args []string,
 		return err
 	}
 	defer st.Close()
-	results, err := st.Mentions(ctx, *target, store.RequireLimit(*limit))
+	results, err := st.Mentions(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *target, store.RequireLimit(*limit))
 	if err != nil {
 		return err
 	}
@@ -410,16 +428,22 @@ func (a *App) runUsers(ctx context.Context, configPath string, args []string, fo
 	if err != nil {
 		return err
 	}
+	fs := flag.NewFlagSet("users", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	workspaceID := fs.String("workspace", "", "workspace id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	query := ""
-	if len(args) > 0 {
-		query = args[0]
+	if fs.NArg() > 0 {
+		query = fs.Arg(0)
 	}
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	results, err := st.Users(ctx, query, 100)
+	results, err := st.Users(ctx, coalesce(*workspaceID, cfg.WorkspaceID), query, 100)
 	if err != nil {
 		return err
 	}
@@ -431,16 +455,22 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 	if err != nil {
 		return err
 	}
+	fs := flag.NewFlagSet("channels", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	workspaceID := fs.String("workspace", "", "workspace id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	query := ""
-	if len(args) > 0 {
-		query = args[0]
+	if fs.NArg() > 0 {
+		query = fs.Arg(0)
 	}
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	results, err := st.Channels(ctx, query, 100)
+	results, err := st.Channels(ctx, coalesce(*workspaceID, cfg.WorkspaceID), query, 100)
 	if err != nil {
 		return err
 	}
@@ -468,7 +498,14 @@ func (a *App) runTail(ctx context.Context, configPath string, args []string) err
 	if err != nil {
 		return err
 	}
-	return slackapi.New(cfg.ResolveTokens()).Tail(ctx, st, coalesce(*workspaceID, cfg.WorkspaceID), repairDuration)
+	targets := resolveWorkspaceTargets(cfg, *workspaceID)
+	if len(targets) == 0 {
+		targets = []string{coalesce(*workspaceID, cfg.WorkspaceID)}
+	}
+	if len(targets) == 1 {
+		return slackapi.New(cfg.ResolveTokensForWorkspace(targets[0])).Tail(ctx, st, targets[0], repairDuration)
+	}
+	return a.runTailTargets(ctx, st, cfg, targets, repairDuration)
 }
 
 func (a *App) runWatch(ctx context.Context, configPath string, args []string, format OutputFormat) error {
@@ -558,6 +595,114 @@ func csv(value string) []string {
 		}
 	}
 	return out
+}
+
+func resolveWorkspaceTargets(cfg config.Config, requested string) []string {
+	if strings.TrimSpace(requested) != "" {
+		return []string{strings.TrimSpace(requested)}
+	}
+	if ids := cfg.WorkspaceIDs(); len(ids) > 0 {
+		return ids
+	}
+	if cfg.WorkspaceID != "" {
+		return []string{cfg.WorkspaceID}
+	}
+	return nil
+}
+
+func (a *App) runSyncTargets(ctx context.Context, cfg config.Config, st *store.Store, opts syncer.Options) (syncer.Summary, error) {
+	targets := resolveWorkspaceTargets(cfg, opts.WorkspaceID)
+	if opts.Source == syncer.SourceDesktop {
+		return syncer.Run(ctx, cfg, st, opts)
+	}
+	if len(targets) == 0 {
+		return syncer.Run(ctx, cfg, st, opts)
+	}
+
+	var last syncer.Summary
+	for _, workspaceID := range targets {
+		runOpts := opts
+		runOpts.WorkspaceID = workspaceID
+		summary, err := syncer.RunWithTokens(ctx, cfg, st, runOpts, cfg.ResolveTokensForWorkspace(workspaceID))
+		if err != nil {
+			return syncer.Summary{}, err
+		}
+		last = summary
+	}
+	return last, nil
+}
+
+func (a *App) runTailTargets(ctx context.Context, st *store.Store, cfg config.Config, workspaceIDs []string, repairEvery time.Duration) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errCh := make(chan error, len(workspaceIDs))
+	var wg sync.WaitGroup
+	for _, workspaceID := range workspaceIDs {
+		workspaceID := workspaceID
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := slackapi.New(cfg.ResolveTokensForWorkspace(workspaceID)).Tail(ctx, st, workspaceID, repairEvery)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errCh <- fmt.Errorf("tail %s: %w", workspaceID, err)
+				cancel()
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-done:
+		return ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (a *App) workspaceDoctorReports(ctx context.Context, cfg config.Config) ([]map[string]any, error) {
+	workspaceIDs := cfg.WorkspaceIDs()
+	if len(workspaceIDs) == 0 {
+		return nil, nil
+	}
+	reports := make([]map[string]any, 0, len(workspaceIDs))
+	for _, workspaceID := range workspaceIDs {
+		tokens := cfg.ResolveTokensForWorkspace(workspaceID)
+		diag, err := slackapi.New(tokens).Doctor(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return nil, fmt.Errorf("doctor %s: %w", workspaceID, err)
+		}
+		reports = append(reports, map[string]any{
+			"workspace_id": workspaceID,
+			"tokens": map[string]any{
+				"bot_set":  tokens.Bot != "",
+				"app_set":  tokens.App != "",
+				"user_set": tokens.User != "",
+			},
+			"slack_api": diag,
+		})
+	}
+	return reports, nil
+}
+
+func aggregateThreadCoverage(reports []map[string]any) string {
+	if len(reports) == 0 {
+		return "partial"
+	}
+	for _, report := range reports {
+		slackAPI, ok := report["slack_api"].(slackapi.Diagnostics)
+		if !ok || slackAPI.ThreadCoverage != "full" {
+			return "partial"
+		}
+	}
+	return "full"
 }
 
 func coalesce(primary string, fallback string) string {
