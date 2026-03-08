@@ -141,7 +141,40 @@ const value = {
   },
   messages: {
     C111: {
-      "1710000001.000200": { channel: "C111", ts: "1710000001.000200", type: "message", user: "U111", text: "hello <@U222|alice>", reply_count: 1, latest_reply: "1710000002.000300" }
+      "1710000001.000200": {
+        channel: "C111",
+        ts: "1710000001.000200",
+        type: "message",
+        user: "U111",
+        text: "hello <@U222|alice>",
+        reply_count: 1,
+        latest_reply: "1710000002.000300",
+        replies: {
+          "1710000002.000300": {
+            user: "U111",
+            thread_ts: "1710000001.000200",
+            parent_user_id: "U111",
+            text: "thread reply"
+          }
+        }
+      }
+    }
+  },
+  threads: {
+    C111: {
+      "1710000001.000200": {
+        messages: [
+          {
+            channel: "C111",
+            ts: "1710000002.000300",
+            type: "message",
+            user: "U111",
+            thread_ts: "1710000001.000200",
+            parent_user_id: "U111",
+            text: "thread reply"
+          }
+        ]
+      }
     }
   }
 };
@@ -168,9 +201,15 @@ fs.writeFileSync(process.argv[1], v8.serialize(value));
 	require.Equal(t, "U111", states[0].UserID)
 	require.Len(t, states[0].Channels, 1)
 	require.Len(t, states[0].Members, 1)
-	require.Len(t, states[0].Messages, 1)
+	require.Len(t, states[0].Messages, 2)
 	require.Equal(t, "general", states[0].Channels[0].Name)
-	require.Equal(t, "hello <@U222|alice>", states[0].Messages[0].Text)
+	byTS := map[string]ReduxMessage{}
+	for _, message := range states[0].Messages {
+		byTS[message.TS] = message
+	}
+	require.Equal(t, "hello <@U222|alice>", byTS["1710000001.000200"].Text)
+	require.Equal(t, "1710000001.000200", byTS["1710000002.000300"].ThreadTS)
+	require.Equal(t, "thread reply", byTS["1710000002.000300"].Text)
 }
 
 func encodeIndexedDBDataKey(indexID int, stringKey string) []byte {

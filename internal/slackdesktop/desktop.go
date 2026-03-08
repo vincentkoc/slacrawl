@@ -203,18 +203,6 @@ func Discover(path string) (Source, error) {
 		return Source{}, err
 	}
 	source.Summary = root.Summary
-
-	local, err := ParseLocalStorage(filepath.Join(path, localStorageDir))
-	if err != nil && !os.IsNotExist(err) {
-		return Source{}, err
-	}
-	source.Local = local.Summary
-
-	indexed, err := ScanIndexedDB(filepath.Join(path, indexedDBDir))
-	if err != nil && !os.IsNotExist(err) {
-		return Source{}, err
-	}
-	source.IndexedDB = indexed
 	return source, nil
 }
 
@@ -306,6 +294,9 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 	if err != nil {
 		return Source{}, err
 	}
+	source.Summary = extracted.RootState.Summary
+	source.Local = localSummary(extracted)
+	source.IndexedDB = extracted.IndexedDB
 	source.IndexedDB.DecodedStateCount = extracted.IndexedDB.DecodedStateCount
 
 	now := time.Now().UTC()
@@ -475,6 +466,42 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 	}
 
 	return source, nil
+}
+
+func localSummary(extracted ExtractedData) LocalStorageSummary {
+	return LocalStorageSummary{
+		WorkspaceCount:     len(extracted.LocalConfig.Teams),
+		DraftCount:         len(extracted.Drafts),
+		ActivityTeamCount:  len(extracted.Activity),
+		RecentChannelCount: countRecentChannels(extracted.Recent),
+		ReadMarkerCount:    len(extracted.ReadMarkers),
+		CustomStatusCount:  countCustomStatuses(extracted.Statuses),
+		ExpandableCount:    countExpandables(extracted.Expandables),
+	}
+}
+
+func countRecentChannels(recent map[string][]string) int {
+	total := 0
+	for _, ids := range recent {
+		total += len(ids)
+	}
+	return total
+}
+
+func countCustomStatuses(records []CustomStatusRecord) int {
+	total := 0
+	for _, record := range records {
+		total += len(record.Statuses)
+	}
+	return total
+}
+
+func countExpandables(records []ExpandableRecord) int {
+	total := 0
+	for _, record := range records {
+		total += len(record.Keys)
+	}
+	return total
 }
 
 func LoadRootState(path string) (RootStateData, error) {
