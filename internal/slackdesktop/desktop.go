@@ -49,6 +49,9 @@ type LocalStorageSummary struct {
 	DraftCount         int `json:"draft_count"`
 	ActivityTeamCount  int `json:"activity_team_count"`
 	RecentChannelCount int `json:"recent_channel_count"`
+	ReadMarkerCount    int `json:"read_marker_count"`
+	CustomStatusCount  int `json:"custom_status_count"`
+	ExpandableCount    int `json:"expandable_count"`
 }
 
 type IndexedDBSummary struct {
@@ -65,6 +68,9 @@ type ExtractedData struct {
 	Drafts      []Draft
 	Activity    map[string]ActivitySession
 	Recent      map[string][]string
+	ReadMarkers []ReadMarker
+	Statuses    []CustomStatusRecord
+	Expandables []ExpandableRecord
 	IndexedDB   IndexedDBSummary
 }
 
@@ -139,6 +145,38 @@ type ActivityRecord struct {
 	StartTime    int64  `json:"startTime"`
 	LastActivity int64  `json:"lastActivity"`
 	LastLogged   int64  `json:"lastLogged"`
+}
+
+type CustomStatus struct {
+	ID          string `json:"id"`
+	UserID      string `json:"user_id"`
+	Text        string `json:"text"`
+	Emoji       string `json:"emoji"`
+	Duration    string `json:"duration"`
+	IsActive    bool   `json:"is_active"`
+	DateCreated int64  `json:"date_created"`
+	DateExpire  int64  `json:"date_expire"`
+}
+
+type CustomStatusRecord struct {
+	WorkspaceID string         `json:"workspace_id"`
+	UserID      string         `json:"user_id"`
+	Statuses    []CustomStatus `json:"statuses"`
+}
+
+type ReadMarker struct {
+	WorkspaceID string `json:"workspace_id"`
+	UserID      string `json:"user_id"`
+	ChannelID   string `json:"channel_id"`
+	TS          string `json:"ts"`
+	Reason      string `json:"reason"`
+	PersistKey  string `json:"persist_key"`
+}
+
+type ExpandableRecord struct {
+	WorkspaceID string   `json:"workspace_id"`
+	UserID      string   `json:"user_id"`
+	Keys        []string `json:"keys"`
 }
 
 func Discover(path string) (Source, error) {
@@ -233,6 +271,9 @@ func Extract(path string) (ExtractedData, error) {
 		Drafts:      local.Drafts,
 		Activity:    local.Activity,
 		Recent:      local.Recent,
+		ReadMarkers: local.ReadMarkers,
+		Statuses:    local.Statuses,
+		Expandables: local.Expandables,
 		IndexedDB:   indexed,
 	}, nil
 }
@@ -258,9 +299,17 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 	}
 
 	now := time.Now().UTC()
+	statusByWorkspaceUser := map[string][]CustomStatus{}
+	for _, status := range extracted.Statuses {
+		statusByWorkspaceUser[status.WorkspaceID+":"+status.UserID] = append(statusByWorkspaceUser[status.WorkspaceID+":"+status.UserID], status.Statuses...)
+	}
 	for teamID, team := range extracted.LocalConfig.Teams {
 		sanitized := team
 		sanitized.Token = config.Redact(sanitized.Token)
+		userPayload := map[string]any{
+			"team":            sanitized,
+			"custom_statuses": statusByWorkspaceUser[teamID+":"+team.UserID],
+		}
 		if err := st.UpsertWorkspace(ctx, store.Workspace{
 			ID:        teamID,
 			Name:      fallback(sanitized.Name, teamID),
@@ -276,8 +325,8 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 				WorkspaceID: teamID,
 				Name:        fallback(team.UserID, team.UserID),
 				DisplayName: fallback(team.Name, team.UserID),
-				Title:       "desktop_local_user",
-				RawJSON:     store.MarshalRaw(sanitized),
+				Title:       userTitle(statusByWorkspaceUser[teamID+":"+team.UserID]),
+				RawJSON:     store.MarshalRaw(userPayload),
 				UpdatedAt:   now,
 			}); err != nil {
 				return Source{}, err
@@ -285,6 +334,29 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 		}
 	}
 
+	channelHints := map[string]store.Channel{}
+	for workspaceID, channelIDs := range extracted.Recent {
+		for _, channelID := range channelIDs {
+			mergeChannelHint(channelHints, store.Channel{
+				ID:          channelID,
+				WorkspaceID: workspaceID,
+				Name:        channelID,
+				Kind:        "desktop_recent",
+				RawJSON:     store.MarshalRaw(map[string]any{"workspace_id": workspaceID, "channel_id": channelID, "source": "recentlyJoinedChannels"}),
+				UpdatedAt:   now,
+			})
+		}
+	}
+	for _, marker := range extracted.ReadMarkers {
+		mergeChannelHint(channelHints, store.Channel{
+			ID:          marker.ChannelID,
+			WorkspaceID: marker.WorkspaceID,
+			Name:        marker.ChannelID,
+			Kind:        "desktop_mark",
+			RawJSON:     store.MarshalRaw(marker),
+			UpdatedAt:   now,
+		})
+	}
 	for _, draft := range extracted.Drafts {
 		if len(draft.Destinations) == 0 {
 			continue
@@ -298,16 +370,14 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 			continue
 		}
 
-		if err := st.UpsertChannel(ctx, store.Channel{
+		mergeChannelHint(channelHints, store.Channel{
 			ID:          channelID,
 			WorkspaceID: workspaceID,
 			Name:        inferredChannelName(channelID, draft),
-			Kind:        "desktop_unknown",
-			RawJSON:     "{}",
+			Kind:        "desktop_draft",
+			RawJSON:     store.MarshalRaw(map[string]any{"workspace_id": workspaceID, "channel_id": channelID, "source": "draft"}),
 			UpdatedAt:   now,
-		}); err != nil {
-			return Source{}, err
-		}
+		})
 
 		message := store.Message{
 			ChannelID:      channelID,
@@ -331,6 +401,11 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 			return Source{}, err
 		}
 	}
+	for _, channel := range channelHints {
+		if err := st.UpsertChannel(ctx, channel); err != nil {
+			return Source{}, err
+		}
+	}
 
 	if err := st.SetSyncState(ctx, sourceName, "root_state", "path", source.Path); err != nil {
 		return Source{}, err
@@ -350,8 +425,35 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 	if err := st.SetSyncState(ctx, sourceName, "local_storage", "activity_team_count", intString(source.Local.ActivityTeamCount)); err != nil {
 		return Source{}, err
 	}
+	if err := st.SetSyncState(ctx, sourceName, "local_storage", "recent_channel_count", intString(source.Local.RecentChannelCount)); err != nil {
+		return Source{}, err
+	}
+	if err := st.SetSyncState(ctx, sourceName, "local_storage", "read_marker_count", intString(source.Local.ReadMarkerCount)); err != nil {
+		return Source{}, err
+	}
+	if err := st.SetSyncState(ctx, sourceName, "local_storage", "custom_status_count", intString(source.Local.CustomStatusCount)); err != nil {
+		return Source{}, err
+	}
+	if err := st.SetSyncState(ctx, sourceName, "local_storage", "expandable_count", intString(source.Local.ExpandableCount)); err != nil {
+		return Source{}, err
+	}
 	for teamID, downloads := range extracted.RootState.Downloads {
 		if err := st.SetSyncState(ctx, sourceName, "downloads", teamID, intString(len(downloads))); err != nil {
+			return Source{}, err
+		}
+	}
+	for _, marker := range extracted.ReadMarkers {
+		if err := st.SetSyncState(ctx, sourceName, "read_marker", marker.ChannelID, marker.TS); err != nil {
+			return Source{}, err
+		}
+	}
+	for _, expandable := range extracted.Expandables {
+		if err := st.SetSyncState(ctx, sourceName, "expandables", expandable.WorkspaceID+":"+expandable.UserID, intString(len(expandable.Keys))); err != nil {
+			return Source{}, err
+		}
+	}
+	for _, status := range extracted.Statuses {
+		if err := st.SetSyncState(ctx, sourceName, "custom_status", status.WorkspaceID+":"+status.UserID, intString(len(status.Statuses))); err != nil {
 			return Source{}, err
 		}
 	}
@@ -399,6 +501,9 @@ type localStorageData struct {
 	Drafts      []Draft
 	Activity    map[string]ActivitySession
 	Recent      map[string][]string
+	ReadMarkers []ReadMarker
+	Statuses    []CustomStatusRecord
+	Expandables []ExpandableRecord
 }
 
 func ParseLocalStorage(path string) (localStorageData, error) {
@@ -413,6 +518,9 @@ func ParseLocalStorage(path string) (localStorageData, error) {
 		drafts     []Draft
 		activity   = map[string]ActivitySession{}
 		recent     = map[string][]string{}
+		markers    []ReadMarker
+		statuses   []CustomStatusRecord
+		expand     []ExpandableRecord
 	)
 
 	iter := db.NewIterator(nil, nil)
@@ -465,6 +573,68 @@ func ParseLocalStorage(path string) (localStorageData, error) {
 					}
 				}
 			}
+		case strings.Contains(key, "persist-v1::") && strings.HasSuffix(key, "::customStatus"):
+			workspaceID, userID, ok := persistContext(key)
+			if !ok {
+				continue
+			}
+			var payload map[string]CustomStatus
+			if err := json.Unmarshal(value, &payload); err == nil {
+				record := CustomStatusRecord{WorkspaceID: workspaceID, UserID: userID}
+				for id, status := range payload {
+					if status.ID == "" {
+						status.ID = id
+					}
+					if status.UserID == "" {
+						status.UserID = userID
+					}
+					record.Statuses = append(record.Statuses, status)
+				}
+				sort.Slice(record.Statuses, func(i, j int) bool {
+					return record.Statuses[i].DateCreated < record.Statuses[j].DateCreated
+				})
+				statuses = append(statuses, record)
+			}
+		case strings.Contains(key, "persist-v1::") && strings.HasSuffix(key, "::persistedApiCalls"):
+			workspaceID, userID, ok := persistContext(key)
+			if !ok {
+				continue
+			}
+			var payload map[string]persistedAPICall
+			if err := json.Unmarshal(value, &payload); err == nil {
+				for persistKey, call := range payload {
+					if call.Method != "conversations.mark" {
+						continue
+					}
+					channelID, _ := call.Args["channel"].(string)
+					ts, _ := call.Args["ts"].(string)
+					if channelID == "" || ts == "" {
+						continue
+					}
+					markers = append(markers, ReadMarker{
+						WorkspaceID: workspaceID,
+						UserID:      userID,
+						ChannelID:   channelID,
+						TS:          ts,
+						Reason:      call.Reason,
+						PersistKey:  fallback(call.PersistKey, persistKey),
+					})
+				}
+			}
+		case strings.Contains(key, "persist-v1::") && strings.HasSuffix(key, "::expandables"):
+			workspaceID, userID, ok := persistContext(key)
+			if !ok {
+				continue
+			}
+			var payload map[string]bool
+			if err := json.Unmarshal(value, &payload); err == nil {
+				record := ExpandableRecord{WorkspaceID: workspaceID, UserID: userID}
+				for expandableKey := range payload {
+					record.Keys = append(record.Keys, expandableKey)
+				}
+				sort.Strings(record.Keys)
+				expand = append(expand, record)
+			}
 		}
 	}
 	if err := iter.Error(); err != nil {
@@ -479,6 +649,14 @@ func ParseLocalStorage(path string) (localStorageData, error) {
 	for _, ids := range recent {
 		recentCount += len(ids)
 	}
+	customStatusCount := 0
+	for _, record := range statuses {
+		customStatusCount += len(record.Statuses)
+	}
+	expandableCount := 0
+	for _, record := range expand {
+		expandableCount += len(record.Keys)
+	}
 
 	return localStorageData{
 		Summary: LocalStorageSummary{
@@ -486,12 +664,25 @@ func ParseLocalStorage(path string) (localStorageData, error) {
 			DraftCount:         len(drafts),
 			ActivityTeamCount:  len(activity),
 			RecentChannelCount: recentCount,
+			ReadMarkerCount:    len(markers),
+			CustomStatusCount:  customStatusCount,
+			ExpandableCount:    expandableCount,
 		},
 		LocalConfig: configData,
 		Drafts:      drafts,
 		Activity:    activity,
 		Recent:      recent,
+		ReadMarkers: markers,
+		Statuses:    statuses,
+		Expandables: expand,
 	}, nil
+}
+
+type persistedAPICall struct {
+	Method     string         `json:"method"`
+	Args       map[string]any `json:"args"`
+	Reason     string         `json:"reason"`
+	PersistKey string         `json:"persistKey"`
 }
 
 func ScanIndexedDB(path string) (IndexedDBSummary, error) {
@@ -602,10 +793,78 @@ func hasDraftForWorkspace(workspaceID string, draft Draft) bool {
 }
 
 func inferredChannelName(channelID string, draft Draft) string {
-	if draft.Destinations != nil && len(draft.Destinations) > 0 && draft.Destinations[0].ThreadTS != "" {
-		return channelID + " (thread)"
-	}
+	_ = draft
 	return channelID
+}
+
+func persistContext(key string) (workspaceID string, userID string, ok bool) {
+	parts := strings.Split(key, "::")
+	if len(parts) < 4 {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
+}
+
+func userTitle(statuses []CustomStatus) string {
+	active := activeStatus(statuses)
+	if active == "" {
+		return "desktop_local_user"
+	}
+	return "desktop_local_user | " + active
+}
+
+func activeStatus(statuses []CustomStatus) string {
+	for _, status := range statuses {
+		if !status.IsActive {
+			continue
+		}
+		if status.Emoji != "" && status.Text != "" {
+			return status.Emoji + " " + status.Text
+		}
+		if status.Text != "" {
+			return status.Text
+		}
+		if status.Emoji != "" {
+			return status.Emoji
+		}
+	}
+	return ""
+}
+
+func mergeChannelHint(hints map[string]store.Channel, candidate store.Channel) {
+	current, ok := hints[candidate.ID]
+	if !ok {
+		hints[candidate.ID] = candidate
+		return
+	}
+	if channelHintPriority(candidate.Kind) < channelHintPriority(current.Kind) {
+		hints[candidate.ID] = candidate
+		return
+	}
+	if current.WorkspaceID == "" && candidate.WorkspaceID != "" {
+		current.WorkspaceID = candidate.WorkspaceID
+	}
+	if current.Name == "" && candidate.Name != "" {
+		current.Name = candidate.Name
+	}
+	if current.RawJSON == "" || current.RawJSON == "{}" {
+		current.RawJSON = candidate.RawJSON
+	}
+	current.UpdatedAt = candidate.UpdatedAt
+	hints[candidate.ID] = current
+}
+
+func channelHintPriority(kind string) int {
+	switch kind {
+	case "desktop_draft":
+		return 1
+	case "desktop_recent":
+		return 2
+	case "desktop_mark":
+		return 3
+	default:
+		return 100
+	}
 }
 
 func fallback(value string, fallback string) string {

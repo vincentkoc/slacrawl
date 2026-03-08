@@ -13,6 +13,7 @@ It is a local-first Go CLI. V1 supports Slack Web API ingestion and macOS Slack 
 - records structured mentions for direct querying
 - exposes read-only SQL for ad hoc analysis
 - reports desktop-local Slack cache availability on macOS
+- ingests desktop-local workspace metadata, drafts, read markers, recent-channel hints, and custom-status metadata
 - tails Socket Mode events when an app-level token is configured
 
 ## V1 Scope
@@ -32,7 +33,7 @@ Out of scope for V1:
 - attachment binary downloads
 - write-back actions
 - Marketplace/public-distribution guarantees
-- desktop-local message extraction beyond the documented bootstrap surface
+- full desktop-local sent-message extraction from IndexedDB caches
 
 ## Requirements
 

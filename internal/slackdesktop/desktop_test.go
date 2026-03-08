@@ -32,6 +32,10 @@ func TestParseLocalStorage(t *testing.T) {
 	require.NoError(t, db.Put([]byte("_https://app.slack.comlocalConfig_v2"), []byte(`{"teams":{"T111":{"id":"T111","name":"Team One","domain":"team-one","user_id":"U111","token":"xoxc-secret"}}}`), nil))
 	require.NoError(t, db.Put([]byte("_https://app.slack.compersist-v1::T111::U111::drafts"), []byte(`{"unifiedDrafts":{"draft-1":{"id":"draft-1","client_draft_id":"draft-1","destinations":[{"channel_id":"C111","thread_ts":"1710000000.000100"}],"ops":[{"insert":"hello "},{"insert":"world"}],"last_updated_ts":1710000001.000200}}}`), nil))
 	require.NoError(t, db.Put([]byte("_https://app.slack.comactivitySession_T111"), []byte(`{"session-1":{"id":"session-1","startTime":1,"lastActivity":2,"lastLogged":3}}`), nil))
+	require.NoError(t, db.Put([]byte("_https://app.slack.compersist-v1::T111::U111::customStatus"), []byte(`{"status-1":{"id":"status-1","user_id":"U111","text":"Heads down","emoji":":spiral_calendar_pad:","is_active":true,"date_created":10}}`), nil))
+	require.NoError(t, db.Put([]byte("_https://app.slack.compersist-v1::T111::U111::persistedApiCalls"), []byte(`{"mark-1":{"method":"conversations.mark","persistKey":"mark-1","reason":"viewed","args":{"channel":"C111","ts":"1710000002.000300"}}}`), nil))
+	require.NoError(t, db.Put([]byte("_https://app.slack.compersist-v1::T111::U111::expandables"), []byte(`{"attach_text_1710000002.000300Channel":true,"inline_files_msg_1710000002_123Channel":true}`), nil))
+	require.NoError(t, db.Put([]byte("_https://app.slack.compersist-v1::T111::U111::recentlyJoinedChannels"), []byte(`{"C222":{},"C333":{}}`), nil))
 	require.NoError(t, db.Close())
 
 	data, err := ParseLocalStorage(dbPath)
@@ -39,8 +43,18 @@ func TestParseLocalStorage(t *testing.T) {
 	require.Equal(t, 1, data.Summary.WorkspaceCount)
 	require.Equal(t, 1, data.Summary.DraftCount)
 	require.Equal(t, 1, data.Summary.ActivityTeamCount)
+	require.Equal(t, 2, data.Summary.RecentChannelCount)
+	require.Equal(t, 1, data.Summary.ReadMarkerCount)
+	require.Equal(t, 1, data.Summary.CustomStatusCount)
+	require.Equal(t, 2, data.Summary.ExpandableCount)
 	require.Equal(t, "Team One", data.LocalConfig.Teams["T111"].Name)
 	require.Equal(t, "hello world", draftText(data.Drafts[0]))
+	require.Len(t, data.ReadMarkers, 1)
+	require.Equal(t, "C111", data.ReadMarkers[0].ChannelID)
+	require.Len(t, data.Statuses, 1)
+	require.Equal(t, "Heads down", data.Statuses[0].Statuses[0].Text)
+	require.Len(t, data.Expandables, 1)
+	require.Equal(t, []string{"attach_text_1710000002.000300Channel", "inline_files_msg_1710000002_123Channel"}, data.Expandables[0].Keys)
 }
 
 func TestIngestDesktopState(t *testing.T) {
@@ -58,6 +72,10 @@ func TestIngestDesktopState(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, localDB.Put([]byte("_https://app.slack.comlocalConfig_v2"), []byte(`{"teams":{"T111":{"id":"T111","name":"Team One","domain":"team-one","user_id":"U111","token":"xoxc-secret"}}}`), nil))
 	require.NoError(t, localDB.Put([]byte("_https://app.slack.compersist-v1::T111::U111::drafts"), []byte(`{"unifiedDrafts":{"draft-1":{"id":"draft-1","client_draft_id":"draft-1","destinations":[{"channel_id":"C111"}],"ops":[{"insert":"draft body"}],"last_updated_ts":1710000001.000200}}}`), nil))
+	require.NoError(t, localDB.Put([]byte("_https://app.slack.compersist-v1::T111::U111::recentlyJoinedChannels"), []byte(`{"C222":{}}`), nil))
+	require.NoError(t, localDB.Put([]byte("_https://app.slack.compersist-v1::T111::U111::customStatus"), []byte(`{"status-1":{"id":"status-1","user_id":"U111","text":"Travel","emoji":":airplane:","is_active":true,"date_created":10}}`), nil))
+	require.NoError(t, localDB.Put([]byte("_https://app.slack.compersist-v1::T111::U111::persistedApiCalls"), []byte(`{"mark-1":{"method":"conversations.mark","persistKey":"mark-1","reason":"viewed","args":{"channel":"C333","ts":"1710000003.000400"}}}`), nil))
+	require.NoError(t, localDB.Put([]byte("_https://app.slack.compersist-v1::T111::U111::expandables"), []byte(`{"attach_text_1710000003.000400Channel":true}`), nil))
 	require.NoError(t, localDB.Close())
 
 	indexDB, err := leveldb.OpenFile(filepath.Join(root, "IndexedDB", "https_app.slack.com_0.indexeddb.leveldb"), &opt.Options{Comparer: indexedDBComparer{}})
@@ -80,4 +98,21 @@ func TestIngestDesktopState(t *testing.T) {
 	require.Equal(t, 1, status.Workspaces)
 	require.Equal(t, 1, status.Users)
 	require.Equal(t, 1, status.Messages)
+
+	channels, err := st.Channels(context.Background(), "", 10)
+	require.NoError(t, err)
+	require.Len(t, channels, 3)
+
+	users, err := st.Users(context.Background(), "", 10)
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	require.Equal(t, "desktop_local_user | :airplane: Travel", users[0].Title)
+
+	readTS, err := st.GetSyncState(context.Background(), sourceName, "read_marker", "C333")
+	require.NoError(t, err)
+	require.Equal(t, "1710000003.000400", readTS)
+
+	expandableCount, err := st.GetSyncState(context.Background(), sourceName, "expandables", "T111:U111")
+	require.NoError(t, err)
+	require.Equal(t, "1", expandableCount)
 }

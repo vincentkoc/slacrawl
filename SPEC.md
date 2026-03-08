@@ -205,7 +205,13 @@ Credential model:
 2. snapshot/copy source artifacts before parsing
 3. parse `storage/root-state.json`
 4. inspect IndexedDB and Local Storage artifacts
-5. upsert any supported metadata surfaced by the bootstrap parser
+5. ingest supported desktop-local metadata:
+   - workspace/user metadata from `localConfig_v2`
+   - draft bodies and thread draft destinations
+   - recent-channel hints
+   - `conversations.mark` read markers
+   - custom-status state
+   - IndexedDB object store inventory for drift detection
 
 ## Recommended Go Package Layout
 
