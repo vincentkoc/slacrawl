@@ -225,6 +225,11 @@ type ChannelRow struct {
 	Kind string `json:"kind"`
 }
 
+type ChannelSyncCursor struct {
+	ID       string
+	LatestTS string
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
@@ -560,6 +565,31 @@ limit ?
 	for rows.Next() {
 		var row ChannelRow
 		if err := rows.Scan(&row.ID, &row.Name, &row.Kind); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ChannelSyncCursors(ctx context.Context, workspaceID string) ([]ChannelSyncCursor, error) {
+	rows, err := s.db.QueryContext(ctx, `
+select c.id, coalesce(max(case when m.ts not like 'draft:%' then m.ts end), '')
+from channels c
+left join messages m on m.channel_id = c.id and m.workspace_id = c.workspace_id
+where c.workspace_id = ?
+group by c.id
+order by c.id asc
+`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ChannelSyncCursor
+	for rows.Next() {
+		var row ChannelSyncCursor
+		if err := rows.Scan(&row.ID, &row.LatestTS); err != nil {
 			return nil, err
 		}
 		out = append(out, row)

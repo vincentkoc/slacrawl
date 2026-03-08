@@ -2,8 +2,10 @@ package slackapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -185,10 +187,66 @@ func TestHandleSocketModeEventAcksAndPersists(t *testing.T) {
 	require.Equal(t, "tail message", rows[0].Text)
 }
 
+func TestRepairWorkspaceReconcilesIncrementalHistory(t *testing.T) {
+	server := newRepairSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot:  "xoxb-test",
+		User: "xoxp-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+	client.now = func() time.Time { return time.Date(2026, 3, 8, 4, 0, 0, 0, time.UTC) }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	ctx := context.Background()
+	require.NoError(t, st.UpsertWorkspace(ctx, store.Workspace{
+		ID:        "T123",
+		Name:      "team",
+		RawJSON:   "{}",
+		UpdatedAt: client.now(),
+	}))
+	require.NoError(t, st.UpsertChannel(ctx, store.Channel{
+		ID:          "C123",
+		WorkspaceID: "T123",
+		Name:        "general",
+		Kind:        "public_channel",
+		RawJSON:     "{}",
+		UpdatedAt:   client.now(),
+	}))
+	require.NoError(t, st.UpsertMessage(ctx, store.Message{
+		ChannelID:      "C123",
+		TS:             "1710000000.000100",
+		WorkspaceID:    "T123",
+		UserID:         "U123",
+		Text:           "existing root",
+		NormalizedText: "existing root",
+		ReplyCount:     1,
+		LatestReply:    "1710000001.000200",
+		SourceRank:     2,
+		SourceName:     SourceBot,
+		RawJSON:        "{}",
+		UpdatedAt:      client.now(),
+	}, nil))
+
+	require.NoError(t, client.repairWorkspace(ctx, st, "T123"))
+
+	rows, err := st.Messages(ctx, "C123", "", 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Equal(t, "new repair message", rows[0].Text)
+	require.Equal(t, "existing root", rows[1].Text)
+
+	require.Equal(t, "1709996400.000100", server.lastHistoryOldest("C123"))
+}
+
 type mockSlackServer struct {
-	server *httptest.Server
-	mu     sync.Mutex
-	counts map[string]int
+	server  *httptest.Server
+	mu      sync.Mutex
+	counts  map[string]int
+	lastOld map[string]string
 }
 
 type fakeSocketMode struct {
@@ -204,7 +262,7 @@ func (f *fakeSocketMode) Events() <-chan socketmode.Event { return f.events }
 
 func newMockSlackServer(t *testing.T) *mockSlackServer {
 	t.Helper()
-	mock := &mockSlackServer{counts: map[string]int{}}
+	mock := &mockSlackServer{counts: map[string]int{}, lastOld: map[string]string{}}
 	mock.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mock.mu.Lock()
 		mock.counts[r.URL.Path]++
@@ -236,8 +294,41 @@ func newMockSlackServer(t *testing.T) *mockSlackServer {
 	return mock
 }
 
+func newRepairSlackServer(t *testing.T) *mockSlackServer {
+	t.Helper()
+	mock := &mockSlackServer{counts: map[string]int{}, lastOld: map[string]string{}}
+	mock.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mock.mu.Lock()
+		mock.counts[r.URL.Path]++
+		mock.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/conversations.list":
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C123","name":"general","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":true,"topic":{"value":"topic"},"purpose":{"value":"purpose"}}],"response_metadata":{"next_cursor":""}}`))
+		case "/conversations.history":
+			values := mustFormValues(r)
+			mock.mu.Lock()
+			mock.lastOld[values.Get("channel")] = values.Get("oldest")
+			mock.mu.Unlock()
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","channel":"C123","user":"U234","text":"new repair message","ts":"1710001200.000200"}],"response_metadata":{"next_cursor":""}}`))
+		case "/conversations.replies":
+			_, _ = w.Write([]byte(`{"ok":true,"has_more":false,"messages":[{"type":"message","subtype":"message_replied","channel":"C123","user":"U234","text":"thread repair","thread_ts":"1710000000.000100","ts":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
+		default:
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}
+	}))
+	return mock
+}
+
 func (m *mockSlackServer) Close() {
 	m.server.Close()
+}
+
+func (m *mockSlackServer) lastHistoryOldest(channelID string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastOld[channelID]
 }
 
 func (m *mockSlackServer) URL() string {
@@ -259,6 +350,14 @@ func mustStore(t *testing.T) *store.Store {
 	st, err := store.Open(filepath.Join(t.TempDir(), "slacrawl.db"))
 	require.NoError(t, err)
 	return st
+}
+
+func mustFormValues(r *http.Request) url.Values {
+	_ = r.ParseForm()
+	if r.Form != nil {
+		return r.Form
+	}
+	panic(fmt.Sprintf("missing form for %s", r.URL.Path))
 }
 
 func TestMessageFromEventPreservesDeleteAndThreadFields(t *testing.T) {

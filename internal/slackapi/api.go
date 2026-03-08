@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -223,6 +225,9 @@ func (c *Client) Tail(ctx context.Context, st *store.Store, workspaceID string, 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tickerChan(ticker):
+			if err := c.repairWorkspace(ctx, st, workspaceID); err != nil {
+				return err
+			}
 			if err := st.SetSyncState(ctx, "tail", "repair", workspaceID, c.now().Format(time.RFC3339)); err != nil {
 				return err
 			}
@@ -340,6 +345,35 @@ func (c *Client) handleSocketModeEvent(ctx context.Context, st *store.Store, wor
 	default:
 		return nil
 	}
+}
+
+func (c *Client) repairWorkspace(ctx context.Context, st *store.Store, workspaceID string) error {
+	if c.bot == nil {
+		return errors.New("SLACK_BOT_TOKEN is required for repair")
+	}
+	channels, err := c.fetchChannels(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	cursors, err := st.ChannelSyncCursors(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	latestByChannel := make(map[string]string, len(cursors))
+	for _, cursor := range cursors {
+		latestByChannel[cursor.ID] = cursor.LatestTS
+	}
+	now := c.now()
+	for _, channel := range channels {
+		if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
+			return err
+		}
+		repairSince := repairOldest(latestByChannel[channel.ID], time.Hour)
+		if err := c.syncChannelMessages(ctx, st, workspaceID, channel, SyncOptions{Since: repairSince}, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func messageFromEvent(event *slackevents.MessageEvent) slack.Message {
@@ -550,6 +584,18 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func repairOldest(latestTS string, overlap time.Duration) string {
+	if latestTS == "" {
+		return ""
+	}
+	parsed, err := strconv.ParseFloat(latestTS, 64)
+	if err != nil {
+		return latestTS
+	}
+	adjusted := math.Max(parsed-overlap.Seconds(), 0)
+	return strconv.FormatFloat(adjusted, 'f', 6, 64)
 }
 
 func tickerChan(ticker *time.Ticker) <-chan time.Time {
