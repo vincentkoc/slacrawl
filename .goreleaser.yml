@@ -52,7 +52,7 @@ nfpms:
     file_name_template: "{{ .ConventionalFileName }}"
     homepage: https://github.com/vincentkoc/slacrawl
     maintainer: Vincent Koc <vincent@vincentkoc.com>
-    description: Local-first Slack workspace crawler with SQLite-backed search and querying.
+    description: Go-based CLI for mirroring Slack workspace data into local SQLite.
     license: MIT
     formats:
       - deb

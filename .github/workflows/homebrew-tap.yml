@@ -48,7 +48,7 @@ jobs:
           mkdir -p Formula
           cat > Formula/slacrawl.rb <<EOF
           class Slacrawl < Formula
-            desc "Mirror Slack workspace data into local SQLite for fast local search"
+            desc "Go-based CLI for mirroring Slack workspace data into local SQLite"
             homepage "https://github.com/${SOURCE_REPO}"
             url "${SOURCE_URL}"
             sha256 "${SHA256}"

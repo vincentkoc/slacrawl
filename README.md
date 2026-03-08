@@ -1,7 +1,7 @@
 <h1 align="center">💾 slacrawl</h1>
 
 <p align="center">
-  <strong>Mirror Slack workspace data into local SQLite for fast search, structured queries, and offline inspection.</strong>
+  <strong>A Go-based CLI for mirroring Slack workspace data into local SQLite for search, querying, and offline inspection.</strong>
 </p>
 
 <p align="center">
@@ -13,13 +13,13 @@
 
 ## Why slacrawl?
 
-Slack search is convenient until you need your own workflow, your own retention, or your own queries. `slacrawl` is a local-first Go CLI that pulls Slack workspace metadata and message history into SQLite so you can inspect it without depending on the Slack UI.
+Slack search is convenient until you need your own workflow, your own retention, or your own queries. `slacrawl` is a Go-based CLI that pulls Slack workspace metadata and message history into SQLite so you can inspect it without depending on the Slack UI.
 
-Data stays on your machine. You can run it in API mode, desktop mode, or a hybrid workflow that combines both.
+Data stays on your machine. You can run it in API mode, desktop mode, or a hybrid workflow that combines both. That covers one-shot syncs, live tailing over Socket Mode, and local desktop recovery or "wiretap" style inspection from Slack Desktop artifacts already on your machine.
 
-## What You Get
+## Included
 
-- local SQLite storage with FTS5-backed search
+- local SQLite storage with full-text search backed by SQLite FTS5
 - workspace, channel, user, and message sync
 - thread reply backfill when a user token is available
 - incremental API history sync by default, with `--full` reserved for deliberate backfills
@@ -30,7 +30,7 @@ Data stays on your machine. You can run it in API mode, desktop mode, or a hybri
 - optional Socket Mode live tailing via app token
 - periodic desktop refresh with `watch`
 
-## V1 Scope
+## Current Coverage
 
 - one workspace at a time
 - public channels
@@ -41,7 +41,7 @@ Data stays on your machine. You can run it in API mode, desktop mode, or a hybri
 - read-only SQL access
 - macOS Slack Desktop discovery
 
-Out of scope for V1:
+## Not Yet Included
 
 - Slack export ZIP import
 - DMs and MPIMs
@@ -49,6 +49,8 @@ Out of scope for V1:
 - write-back actions
 - public Marketplace-style distribution hardening
 - desktop-local message extraction beyond the documented bootstrap surface
+
+If one of those gaps matters to your workflow, open an issue so it can be tracked explicitly.
 
 ## Requirements
 
@@ -60,6 +62,37 @@ Out of scope for V1:
 - macOS Slack Desktop only if you want desktop-local discovery
 
 ## Install
+
+<details>
+<summary>Homebrew (macOS)</summary>
+
+```bash
+brew tap vincentkoc/homebrew-tap
+brew install slacrawl
+```
+
+</details>
+
+<details>
+<summary>Linux packages from GitHub Releases</summary>
+
+Download the package that matches your platform from [v0.1.0](https://github.com/vincentkoc/slacrawl/releases/tag/v0.1.0).
+
+Debian/Ubuntu:
+
+```bash
+curl -LO https://github.com/vincentkoc/slacrawl/releases/download/v0.1.0/slacrawl_0.1.0_amd64.deb
+sudo dpkg -i slacrawl_0.1.0_amd64.deb
+```
+
+RHEL/Fedora:
+
+```bash
+curl -LO https://github.com/vincentkoc/slacrawl/releases/download/v0.1.0/slacrawl-0.1.0-1.x86_64.rpm
+sudo rpm -i slacrawl-0.1.0-1.x86_64.rpm
+```
+
+</details>
 
 <details>
 <summary>Build from source</summary>
@@ -100,6 +133,8 @@ go run ./cmd/slacrawl watch --desktop-every 5m
 ```
 
 If you built the binary, replace `go run ./cmd/slacrawl` with `./bin/slacrawl`.
+
+`tail` is the live API side of the tool. `watch` is the recurring desktop-side refresh loop.
 
 Choose the path that matches your setup:
 
@@ -215,6 +250,7 @@ go run ./cmd/slacrawl sql 'select channel_id, count(*) as messages from messages
 
 - Full historical thread reply coverage in public and private channels depends on providing a user token.
 - `tail` requires an app token because it uses Socket Mode.
+- SQLite FTS5 is the built-in full-text index that powers fast local text search without an external search server.
 - Desktop-local support is broader than simple discovery, but still not a full write-back or export-import path.
 
 ## Development
