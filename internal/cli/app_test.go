@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -144,6 +145,68 @@ func TestDoctorIncludesOperationalSyncState(t *testing.T) {
 	require.Equal(t, "T123", state["entity_id"])
 }
 
+func TestWorkspaceFilteredReadCommands(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.toml")
+	dbPath := filepath.Join(tmp, "slacrawl.db")
+
+	cfg := config.Default()
+	cfg.DBPath = dbPath
+	cfg.WorkspaceID = ""
+	require.NoError(t, cfg.Save(configPath))
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	now := mustTime(t, "2026-03-08T18:20:43Z")
+	require.NoError(t, st.UpsertWorkspace(context.Background(), store.Workspace{ID: "T1", Name: "one", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertWorkspace(context.Background(), store.Workspace{ID: "T2", Name: "two", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertChannel(context.Background(), store.Channel{ID: "C1", WorkspaceID: "T1", Name: "alpha", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertChannel(context.Background(), store.Channel{ID: "C2", WorkspaceID: "T2", Name: "beta", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertUser(context.Background(), store.User{ID: "U1", WorkspaceID: "T1", Name: "alice", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertUser(context.Background(), store.User{ID: "U2", WorkspaceID: "T2", Name: "bob", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertMessage(context.Background(), store.Message{
+		ChannelID:      "C1",
+		TS:             "1.0",
+		WorkspaceID:    "T1",
+		UserID:         "U1",
+		Text:           "incident alpha",
+		NormalizedText: "incident alpha",
+		SourceRank:     2,
+		SourceName:     "api-bot",
+		RawJSON:        "{}",
+		UpdatedAt:      now,
+	}, []store.Mention{{Type: "user", TargetID: "U1", DisplayText: "alice"}}))
+	require.NoError(t, st.UpsertMessage(context.Background(), store.Message{
+		ChannelID:      "C2",
+		TS:             "2.0",
+		WorkspaceID:    "T2",
+		UserID:         "U2",
+		Text:           "incident beta",
+		NormalizedText: "incident beta",
+		SourceRank:     2,
+		SourceName:     "api-bot",
+		RawJSON:        "{}",
+		UpdatedAt:      now,
+	}, []store.Mention{{Type: "user", TargetID: "U2", DisplayText: "bob"}}))
+	require.NoError(t, st.Close())
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "--json", "search", "--workspace", "T2", "incident"}))
+	var searchRows []map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &searchRows))
+	require.Len(t, searchRows, 1)
+	require.Equal(t, "T2", searchRows[0]["workspace_id"])
+
+	stdout.Reset()
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "--json", "channels", "--workspace", "T1"}))
+	var channels []map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &channels))
+	require.Len(t, channels, 1)
+	require.Equal(t, "T1", channels[0]["workspace_id"])
+}
+
 func TestHelpIncludesBannerAndUsage(t *testing.T) {
 	var stdout bytes.Buffer
 	app := &App{
@@ -159,6 +222,13 @@ func TestHelpIncludesBannerAndUsage(t *testing.T) {
 	require.Contains(t, out, "slacrawl [global flags] <command> [args]")
 	require.Contains(t, out, "--format <kind>")
 	require.Contains(t, out, "--no-color")
+}
+
+func mustTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, value)
+	require.NoError(t, err)
+	return parsed
 }
 
 func TestStatusHumanOutputIsStructured(t *testing.T) {

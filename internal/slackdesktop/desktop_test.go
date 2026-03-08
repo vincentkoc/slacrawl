@@ -101,11 +101,11 @@ func TestIngestDesktopState(t *testing.T) {
 	require.Equal(t, 1, status.Users)
 	require.Equal(t, 1, status.Messages)
 
-	channels, err := st.Channels(context.Background(), "", 10)
+	channels, err := st.Channels(context.Background(), "", "", 10)
 	require.NoError(t, err)
 	require.Len(t, channels, 3)
 
-	users, err := st.Users(context.Background(), "", 10)
+	users, err := st.Users(context.Background(), "", "", 10)
 	require.NoError(t, err)
 	require.Len(t, users, 1)
 	require.Equal(t, "desktop_local_user | :airplane: Travel", users[0].Title)

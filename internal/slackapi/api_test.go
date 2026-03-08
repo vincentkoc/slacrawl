@@ -46,7 +46,7 @@ func TestSyncHandlesRateLimitAndThreadCoverage(t *testing.T) {
 	require.Equal(t, 2, status.Messages)
 	require.Equal(t, "full", status.ThreadState)
 
-	rows, err := st.Messages(context.Background(), "C123", "", 10)
+	rows, err := st.Messages(context.Background(), "", "C123", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	require.Equal(t, "message_replied", rows[0].Subtype)
@@ -92,7 +92,7 @@ func TestSyncWithInvalidUserTokenStillMarksPartialCoverage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "partial", value)
 
-	rows, err := st.Messages(context.Background(), "C123", "", 10)
+	rows, err := st.Messages(context.Background(), "", "C123", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "root message", rows[0].Text)
@@ -133,7 +133,7 @@ func TestSyncSkipsChannelsTheBotCannotRead(t *testing.T) {
 	err := client.Sync(context.Background(), st, SyncOptions{})
 	require.NoError(t, err)
 
-	rows, err := st.Messages(context.Background(), "C222", "", 10)
+	rows, err := st.Messages(context.Background(), "", "C222", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "accessible message", rows[0].Text)
@@ -159,7 +159,7 @@ func TestSyncUsesConfiguredConcurrencyForChannelHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, server.maxConcurrentHistory(), 2)
 
-	rows, err := st.Messages(context.Background(), "", "", 10)
+	rows, err := st.Messages(context.Background(), "", "", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 }
@@ -179,7 +179,7 @@ func TestSyncJoinsPublicChannelBeforeRetryingHistory(t *testing.T) {
 	err := client.Sync(context.Background(), st, SyncOptions{})
 	require.NoError(t, err)
 
-	rows, err := st.Messages(context.Background(), "C111", "", 10)
+	rows, err := st.Messages(context.Background(), "", "C111", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "joined message", rows[0].Text)
@@ -292,12 +292,12 @@ func TestHandleEventsAPIEventUpdatesStore(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, client.HandleEventsAPIEvent(ctx, st, "T123", renameEvent))
 
-	rows, err := st.Messages(ctx, "C123", "", 10)
+	rows, err := st.Messages(ctx, "", "C123", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.True(t, strings.Contains(rows[0].NormalizedText, "@alex"))
 
-	channels, err := st.Channels(ctx, "renamed", 10)
+	channels, err := st.Channels(ctx, "", "renamed", 10)
 	require.NoError(t, err)
 	require.Len(t, channels, 1)
 }
@@ -344,7 +344,7 @@ func TestHandleSocketModeEventAcksAndPersists(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, socket.acks)
 
-	rows, err := st.Messages(ctx, "C123", "", 10)
+	rows, err := st.Messages(ctx, "", "C123", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "tail message", rows[0].Text)
@@ -396,7 +396,7 @@ func TestRepairWorkspaceReconcilesIncrementalHistory(t *testing.T) {
 
 	require.NoError(t, client.repairWorkspace(ctx, st, "T123"))
 
-	rows, err := st.Messages(ctx, "C123", "", 10)
+	rows, err := st.Messages(ctx, "", "C123", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	require.Equal(t, "new repair message", rows[0].Text)

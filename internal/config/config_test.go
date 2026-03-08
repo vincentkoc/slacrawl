@@ -41,6 +41,43 @@ func TestResolveTokensHonorsEnabledFlags(t *testing.T) {
 	require.Equal(t, "", tokens.User)
 }
 
+func TestResolveTokensForWorkspace(t *testing.T) {
+	t.Setenv("SLACK_BOT_TOKEN", "xoxb-default")
+	t.Setenv("SLACK_APP_TOKEN", "xapp-default")
+	t.Setenv("SLACK_USER_TOKEN", "xoxp-default")
+	t.Setenv("SLACK_ALPHA_BOT_TOKEN", "xoxb-alpha")
+	t.Setenv("SLACK_ALPHA_APP_TOKEN", "xapp-alpha")
+	t.Setenv("SLACK_ALPHA_USER_TOKEN", "xoxp-alpha")
+
+	cfg := Default()
+	cfg.Workspaces = []Workspace{{
+		ID:           "TALPHA",
+		BotTokenEnv:  "SLACK_ALPHA_BOT_TOKEN",
+		AppTokenEnv:  "SLACK_ALPHA_APP_TOKEN",
+		UserTokenEnv: "SLACK_ALPHA_USER_TOKEN",
+	}}
+
+	tokens := cfg.ResolveTokensForWorkspace("TALPHA")
+	require.Equal(t, "xoxb-alpha", tokens.Bot)
+	require.Equal(t, "xapp-alpha", tokens.App)
+	require.Equal(t, "xoxp-alpha", tokens.User)
+	require.Equal(t, "xoxb-default", cfg.ResolveTokensForWorkspace("TUNKNOWN").Bot)
+}
+
+func TestResolveTokensForWorkspaceUsesImplicitWorkspaceEnvNames(t *testing.T) {
+	t.Setenv("SLACK_TALPHA_BOT_TOKEN", "xoxb-alpha")
+	t.Setenv("SLACK_TALPHA_APP_TOKEN", "xapp-alpha")
+	t.Setenv("SLACK_TALPHA_USER_TOKEN", "xoxp-alpha")
+
+	cfg := Default()
+	cfg.Workspaces = []Workspace{{ID: "TALPHA"}}
+
+	tokens := cfg.ResolveTokensForWorkspace("TALPHA")
+	require.Equal(t, "xoxb-alpha", tokens.Bot)
+	require.Equal(t, "xapp-alpha", tokens.App)
+	require.Equal(t, "xoxp-alpha", tokens.User)
+}
+
 func TestSaveAndLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -66,6 +103,17 @@ func TestNormalizeAutoDetectsDesktopPath(t *testing.T) {
 	cfg.Slack.Desktop.Path = ""
 	require.NoError(t, cfg.Normalize())
 	require.True(t, filepath.IsAbs(cfg.Slack.Desktop.Path))
+}
+
+func TestNormalizeSetsDefaultWorkspaceFromWorkspaceList(t *testing.T) {
+	cfg := Default()
+	cfg.Workspaces = []Workspace{
+		{ID: "T123"},
+		{ID: "T456", Default: true},
+	}
+	require.NoError(t, cfg.Normalize())
+	require.Equal(t, "T456", cfg.WorkspaceID)
+	require.Equal(t, []string{"T123", "T456"}, cfg.WorkspaceIDs())
 }
 
 func mustHome(t *testing.T) string {
