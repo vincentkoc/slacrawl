@@ -12,7 +12,7 @@ go build ./cmd/slacrawl
 1. Create a dedicated worktree/branch with `gwt new <branch>`.
 2. Keep changes scoped and reviewable.
 3. Run `go test ./...` before opening a PR.
-4. Keep docs and code in sync. `SPEC.md` is the implementation contract.
+4. Keep docs and code in sync. `SPEC.md` is the implementation contract, and user-facing docs live in `README.md` plus `docs/`.
 
 ## Pull Requests
 

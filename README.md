@@ -4,6 +4,12 @@
 
 It is a local-first Go CLI. V1 supports Slack Web API ingestion and macOS Slack Desktop local-state discovery. Data stays local.
 
+Use it in one of three ways:
+
+- API mode for Slack app-driven sync
+- desktop mode for local Slack Desktop recovery
+- hybrid mode when you want both
+
 ## What It Does
 
 - discovers the configured workspace
@@ -69,6 +75,12 @@ bin/slacrawl tail --repair-every 30m
 bin/slacrawl watch --desktop-every 5m
 ```
 
+Choose the path that matches your setup:
+
+- use `sync --source api --full` when you have Slack app credentials
+- use `sync --source desktop` when you want local desktop recovery only
+- use `watch` when you want desktop-local state to refresh into SQLite continuously
+
 ## Commands
 
 - `init`
@@ -101,3 +113,8 @@ Desktop config notes:
 - leave `[slack.desktop].path = ""` to auto-detect the macOS Slack path
 - set a custom absolute path if Slack Desktop data lives elsewhere
 - set `[slack.bot|app|user].enabled = false` to ignore that token source entirely
+
+Deep-dive docs:
+
+- [`docs/configuration.md`](./docs/configuration.md)
+- [`docs/desktop-mode.md`](./docs/desktop-mode.md)
