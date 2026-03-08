@@ -1,0 +1,85 @@
+name: Update Homebrew Tap
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to sync (for example: v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update-tap:
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.release.tag_name || inputs.tag_name, 'v')
+    steps:
+      - name: Validate tap configuration
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}" ]; then
+            echo "Secret HOMEBREW_TAP_GITHUB_TOKEN is required."
+            exit 1
+          fi
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.HOMEBREW_TAP_REPO || 'vincentkoc/homebrew-tap' }}
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      - name: Update formula
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag_name }}
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          SOURCE_URL="https://github.com/${SOURCE_REPO}/archive/refs/tags/${TAG}.tar.gz"
+
+          curl -fsSL "${SOURCE_URL}" -o /tmp/slacrawl-src.tar.gz
+          SHA256="$(shasum -a 256 /tmp/slacrawl-src.tar.gz | awk '{print $1}')"
+
+          mkdir -p Formula
+          cat > Formula/slacrawl.rb <<EOF
+          class Slacrawl < Formula
+            desc "Mirror Slack workspace data into local SQLite for fast local search"
+            homepage "https://github.com/${SOURCE_REPO}"
+            url "${SOURCE_URL}"
+            sha256 "${SHA256}"
+            license "MIT"
+            version "${VERSION}"
+
+            depends_on "go" => :build
+
+            def install
+              system "go", "build", *std_go_args(ldflags: "-s -w"), "./cmd/slacrawl"
+              pkgshare.install "config.example.toml"
+              doc.install "README.md", "LICENSE", "SPEC.md"
+            end
+
+            test do
+              assert_match "slacrawl commands", shell_output("#{bin}/slacrawl --help")
+            end
+          end
+          EOF
+
+      - name: Commit and push formula update
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          git add Formula/slacrawl.rb
+          if git diff --cached --quiet; then
+            echo "No tap changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: update slacrawl formula for ${TAG}"
+          git push
