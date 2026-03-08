@@ -78,5 +78,6 @@ func TestIngestDesktopState(t *testing.T) {
 	status, err := st.Status(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 1, status.Workspaces)
+	require.Equal(t, 1, status.Users)
 	require.Equal(t, 1, status.Messages)
 }

@@ -270,6 +270,19 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 		}); err != nil {
 			return Source{}, err
 		}
+		if team.UserID != "" {
+			if err := st.UpsertUser(ctx, store.User{
+				ID:          team.UserID,
+				WorkspaceID: teamID,
+				Name:        fallback(team.UserID, team.UserID),
+				DisplayName: fallback(team.Name, team.UserID),
+				Title:       "desktop_local_user",
+				RawJSON:     store.MarshalRaw(sanitized),
+				UpdatedAt:   now,
+			}); err != nil {
+				return Source{}, err
+			}
+		}
 	}
 
 	for _, draft := range extracted.Drafts {
@@ -288,7 +301,7 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 		if err := st.UpsertChannel(ctx, store.Channel{
 			ID:          channelID,
 			WorkspaceID: workspaceID,
-			Name:        channelID,
+			Name:        inferredChannelName(channelID, draft),
 			Kind:        "desktop_unknown",
 			RawJSON:     "{}",
 			UpdatedAt:   now,
@@ -329,6 +342,12 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 		return Source{}, err
 	}
 	if err := st.SetSyncState(ctx, sourceName, "indexeddb", "object_stores", strings.Join(source.IndexedDB.ObjectStores, ",")); err != nil {
+		return Source{}, err
+	}
+	if err := st.SetSyncState(ctx, sourceName, "local_storage", "workspace_count", intString(source.Local.WorkspaceCount)); err != nil {
+		return Source{}, err
+	}
+	if err := st.SetSyncState(ctx, sourceName, "local_storage", "activity_team_count", intString(source.Local.ActivityTeamCount)); err != nil {
 		return Source{}, err
 	}
 	for teamID, downloads := range extracted.RootState.Downloads {
@@ -563,11 +582,30 @@ func firstWorkspaceID(teams map[string]DesktopTeam) string {
 func workspaceForDraft(teams map[string]DesktopTeam, channelID string, draft Draft) string {
 	_ = channelID
 	for workspaceID, team := range teams {
-		if team.UserID != "" {
+		if team.UserID != "" && hasDraftForWorkspace(workspaceID, draft) {
 			return workspaceID
 		}
 	}
 	return ""
+}
+
+func hasDraftForWorkspace(workspaceID string, draft Draft) bool {
+	for _, destination := range draft.Destinations {
+		if strings.HasPrefix(destination.ChannelID, "C") || strings.HasPrefix(destination.ChannelID, "D") || strings.HasPrefix(destination.ChannelID, "G") {
+			return true
+		}
+		if strings.Contains(destination.ChannelID, workspaceID) {
+			return true
+		}
+	}
+	return false
+}
+
+func inferredChannelName(channelID string, draft Draft) string {
+	if draft.Destinations != nil && len(draft.Destinations) > 0 && draft.Destinations[0].ThreadTS != "" {
+		return channelID + " (thread)"
+	}
+	return channelID
 }
 
 func fallback(value string, fallback string) string {
