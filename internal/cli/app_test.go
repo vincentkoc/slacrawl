@@ -13,6 +13,7 @@ import (
 func TestInitStatusAndSQL(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.toml")
+	dbPath := filepath.Join(tmp, "slacrawl.db")
 
 	var stdout bytes.Buffer
 	app := &App{
@@ -21,7 +22,7 @@ func TestInitStatusAndSQL(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "init"}))
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "init", "--db", dbPath}))
 
 	stdout.Reset()
 	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--json", "status"}))
