@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
 
 	"github.com/vincentkoc/slacrawl/internal/config"
 	"github.com/vincentkoc/slacrawl/internal/search"
@@ -37,22 +40,49 @@ type SyncOptions struct {
 }
 
 type Client struct {
-	bot      *slack.Client
-	user     *slack.Client
-	tokens   config.Tokens
-	appToken string
+	bot          *slack.Client
+	user         *slack.Client
+	tokens       config.Tokens
+	appToken     string
+	sleep        func(context.Context, time.Duration) error
+	now          func() time.Time
+	socketModeFn func(*slack.Client) socketModeRunner
 }
 
 func New(tokens config.Tokens) *Client {
+	return NewWithOptions(tokens, "", nil)
+}
+
+func NewWithOptions(tokens config.Tokens, apiURL string, httpClient *http.Client) *Client {
 	client := &Client{
 		tokens:   tokens,
 		appToken: tokens.App,
+		sleep:    sleepContext,
+		now:      func() time.Time { return time.Now().UTC() },
 	}
+
+	buildOptions := func(includeAppToken bool) []slack.Option {
+		var options []slack.Option
+		if apiURL != "" {
+			options = append(options, slack.OptionAPIURL(apiURL))
+		}
+		if httpClient != nil {
+			options = append(options, slack.OptionHTTPClient(httpClient))
+		}
+		if includeAppToken && tokens.App != "" {
+			options = append(options, slack.OptionAppLevelToken(tokens.App))
+		}
+		return options
+	}
+
 	if tokens.Bot != "" {
-		client.bot = slack.New(tokens.Bot)
+		client.bot = slack.New(tokens.Bot, buildOptions(true)...)
 	}
 	if tokens.User != "" {
-		client.user = slack.New(tokens.User)
+		client.user = slack.New(tokens.User, buildOptions(false)...)
+	}
+	client.socketModeFn = func(api *slack.Client) socketModeRunner {
+		return managedSocketMode{client: socketmode.New(api)}
 	}
 	return client
 }
@@ -71,7 +101,7 @@ func (c *Client) Doctor(ctx context.Context) (Diagnostics, error) {
 		return diag, nil
 	}
 
-	resp, err := c.bot.AuthTestContext(ctx)
+	resp, err := c.authTest(ctx, c.bot)
 	if err != nil {
 		return diag, err
 	}
@@ -80,7 +110,7 @@ func (c *Client) Doctor(ctx context.Context) (Diagnostics, error) {
 	diag.AppTailAvailable = c.tokens.App != ""
 
 	if c.user != nil {
-		if _, err := c.user.AuthTestContext(ctx); err == nil {
+		if _, err := c.authTest(ctx, c.user); err == nil {
 			diag.UserAuthAvailable = true
 		}
 	}
@@ -92,7 +122,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 		return errors.New("SLACK_BOT_TOKEN is required for api sync")
 	}
 
-	auth, err := c.bot.AuthTestContext(ctx)
+	auth, err := c.authTest(ctx, c.bot)
 	if err != nil {
 		return err
 	}
@@ -101,7 +131,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 		workspaceID = opts.WorkspaceID
 	}
 
-	now := time.Now().UTC()
+	now := c.now()
 	if err := st.UpsertWorkspace(ctx, store.Workspace{
 		ID:           workspaceID,
 		Name:         auth.Team,
@@ -134,7 +164,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 		}
 	}
 
-	users, err := c.bot.GetUsersContext(ctx)
+	users, err := c.getUsers(ctx, c.bot)
 	if err != nil {
 		return err
 	}
@@ -154,13 +184,76 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 	return st.SetSyncState(ctx, SourceBot, "workspace", workspaceID, now.Format(time.RFC3339))
 }
 
+func (c *Client) Tail(ctx context.Context, st *store.Store, workspaceID string, repairEvery time.Duration) error {
+	if c.bot == nil {
+		return errors.New("SLACK_BOT_TOKEN is required for tail")
+	}
+	if c.appToken == "" {
+		return errors.New("SLACK_APP_TOKEN is required for tail")
+	}
+
+	auth, err := c.authTest(ctx, c.bot)
+	if err != nil {
+		return err
+	}
+	if workspaceID == "" {
+		workspaceID = auth.TeamID
+	}
+
+	socketClient := c.socketModeFn(c.bot)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- socketClient.Run()
+	}()
+
+	var ticker *time.Ticker
+	if repairEvery > 0 {
+		ticker = time.NewTicker(repairEvery)
+		defer ticker.Stop()
+	}
+
+	for {
+		select {
+		case err := <-errCh:
+			return err
+		case event := <-socketClient.Events():
+			if err := c.handleSocketModeEvent(ctx, st, workspaceID, socketClient, event); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tickerChan(ticker):
+			if err := st.SetSyncState(ctx, "tail", "repair", workspaceID, c.now().Format(time.RFC3339)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (c *Client) HandleEventsAPIEvent(ctx context.Context, st *store.Store, workspaceID string, event slackevents.EventsAPIEvent) error {
+	now := c.now()
+	switch ev := event.InnerEvent.Data.(type) {
+	case *slackevents.MessageEvent:
+		msg := messageFromEvent(ev)
+		return st.UpsertMessage(ctx, toStoreMessage(workspaceID, msg, SourceBot, 2, now), toStoreMentions(msg))
+	case *slackevents.ChannelRenameEvent:
+		return st.RenameChannel(ctx, ev.Channel.ID, ev.Channel.Name)
+	case *slackevents.ChannelArchiveEvent:
+		return st.SetChannelArchived(ctx, ev.Channel, true)
+	case *slackevents.ChannelUnarchiveEvent:
+		return st.SetChannelArchived(ctx, ev.Channel, false)
+	default:
+		return nil
+	}
+}
+
 func (c *Client) fetchChannels(ctx context.Context, workspaceID string) ([]slack.Channel, error) {
 	var (
 		cursor   string
 		channels []slack.Channel
 	)
 	for {
-		page, nextCursor, err := c.bot.GetConversationsContext(ctx, &slack.GetConversationsParameters{
+		page, nextCursor, err := c.getConversations(ctx, &slack.GetConversationsParameters{
 			Cursor:          cursor,
 			ExcludeArchived: false,
 			Limit:           200,
@@ -181,7 +274,7 @@ func (c *Client) fetchChannels(ctx context.Context, workspaceID string) ([]slack
 func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, opts SyncOptions, now time.Time) error {
 	cursor := ""
 	for {
-		resp, err := c.bot.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
+		resp, err := c.getConversationHistory(ctx, c.bot, &slack.GetConversationHistoryParameters{
 			ChannelID: channel.ID,
 			Cursor:    cursor,
 			Limit:     200,
@@ -210,7 +303,7 @@ func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, works
 func (c *Client) syncThread(ctx context.Context, st *store.Store, workspaceID string, channelID string, threadTS string, now time.Time) error {
 	cursor := ""
 	for {
-		msgs, _, nextCursor, err := c.user.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+		msgs, _, nextCursor, err := c.getConversationReplies(ctx, &slack.GetConversationRepliesParameters{
 			ChannelID: channelID,
 			Timestamp: threadTS,
 			Cursor:    cursor,
@@ -229,6 +322,110 @@ func (c *Client) syncThread(ctx context.Context, st *store.Store, workspaceID st
 		}
 		cursor = nextCursor
 	}
+}
+
+func (c *Client) handleSocketModeEvent(ctx context.Context, st *store.Store, workspaceID string, socketClient socketModeRunner, event socketmode.Event) error {
+	switch event.Type {
+	case socketmode.EventTypeConnected:
+		return st.SetSyncState(ctx, "tail", "connection", workspaceID, c.now().Format(time.RFC3339))
+	case socketmode.EventTypeEventsAPI:
+		eventsAPIEvent, ok := event.Data.(slackevents.EventsAPIEvent)
+		if !ok {
+			return nil
+		}
+		if event.Request != nil {
+			socketClient.Ack(*event.Request)
+		}
+		return c.HandleEventsAPIEvent(ctx, st, workspaceID, eventsAPIEvent)
+	default:
+		return nil
+	}
+}
+
+func messageFromEvent(event *slackevents.MessageEvent) slack.Message {
+	msg := slack.Message{}
+	if event.Message != nil {
+		msg.Msg = *event.Message
+	}
+	if event.PreviousMessage != nil {
+		if msg.Text == "" {
+			msg.Text = event.PreviousMessage.Text
+		}
+		if msg.Timestamp == "" {
+			msg.Timestamp = event.PreviousMessage.Timestamp
+		}
+		if msg.ThreadTimestamp == "" {
+			msg.ThreadTimestamp = event.PreviousMessage.ThreadTimestamp
+		}
+		if msg.User == "" {
+			msg.User = event.PreviousMessage.User
+		}
+	}
+	if msg.Channel == "" {
+		msg.Channel = event.Channel
+	}
+	if msg.User == "" {
+		msg.User = event.User
+	}
+	if msg.Text == "" {
+		msg.Text = event.Text
+	}
+	if msg.Timestamp == "" {
+		msg.Timestamp = event.TimeStamp
+	}
+	if msg.ThreadTimestamp == "" {
+		msg.ThreadTimestamp = event.ThreadTimeStamp
+	}
+	if msg.SubType == "" {
+		msg.SubType = event.SubType
+	}
+	if event.SubType == "message_deleted" && msg.DeletedTimestamp == "" {
+		msg.DeletedTimestamp = event.DeletedTimeStamp
+	}
+	return msg
+}
+
+func (c *Client) authTest(ctx context.Context, client *slack.Client) (*slack.AuthTestResponse, error) {
+	return retry(ctx, c.sleep, 3, func() (*slack.AuthTestResponse, error) {
+		return client.AuthTestContext(ctx)
+	})
+}
+
+func (c *Client) getConversations(ctx context.Context, params *slack.GetConversationsParameters) ([]slack.Channel, string, error) {
+	type result struct {
+		channels   []slack.Channel
+		nextCursor string
+	}
+	res, err := retry(ctx, c.sleep, 3, func() (result, error) {
+		channels, nextCursor, err := c.bot.GetConversationsContext(ctx, params)
+		return result{channels: channels, nextCursor: nextCursor}, err
+	})
+	return res.channels, res.nextCursor, err
+}
+
+func (c *Client) getConversationHistory(ctx context.Context, client *slack.Client, params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error) {
+	return retry(ctx, c.sleep, 3, func() (*slack.GetConversationHistoryResponse, error) {
+		return client.GetConversationHistoryContext(ctx, params)
+	})
+}
+
+func (c *Client) getConversationReplies(ctx context.Context, params *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error) {
+	type result struct {
+		msgs       []slack.Message
+		hasMore    bool
+		nextCursor string
+	}
+	res, err := retry(ctx, c.sleep, 3, func() (result, error) {
+		msgs, hasMore, nextCursor, err := c.user.GetConversationRepliesContext(ctx, params)
+		return result{msgs: msgs, hasMore: hasMore, nextCursor: nextCursor}, err
+	})
+	return res.msgs, res.hasMore, res.nextCursor, err
+}
+
+func (c *Client) getUsers(ctx context.Context, client *slack.Client) ([]slack.User, error) {
+	return retry(ctx, c.sleep, 3, func() ([]slack.User, error) {
+		return client.GetUsersContext(ctx)
+	})
 }
 
 func toStoreChannel(workspaceID string, channel slack.Channel, now time.Time) store.Channel {
@@ -305,4 +502,59 @@ func toStoreMentions(msg slack.Message) []store.Mention {
 		})
 	}
 	return mentions
+}
+
+type socketModeRunner interface {
+	Run() error
+	Ack(req socketmode.Request, payload ...interface{})
+	Events() <-chan socketmode.Event
+}
+
+type managedSocketMode struct {
+	client *socketmode.Client
+}
+
+func (m managedSocketMode) Run() error { return m.client.Run() }
+func (m managedSocketMode) Ack(req socketmode.Request, payload ...interface{}) {
+	m.client.Ack(req, payload...)
+}
+func (m managedSocketMode) Events() <-chan socketmode.Event { return m.client.Events }
+
+func retry[T any](ctx context.Context, sleeper func(context.Context, time.Duration) error, attempts int, fn func() (T, error)) (T, error) {
+	var zero T
+	for attempt := 0; attempt < attempts; attempt++ {
+		value, err := fn()
+		if err == nil {
+			return value, nil
+		}
+		var rateLimited *slack.RateLimitedError
+		if !errors.As(err, &rateLimited) || attempt == attempts-1 {
+			return zero, err
+		}
+		if err := sleeper(ctx, rateLimited.RetryAfter); err != nil {
+			return zero, err
+		}
+	}
+	return zero, errors.New("retry exhausted")
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func tickerChan(ticker *time.Ticker) <-chan time.Time {
+	if ticker == nil {
+		return nil
+	}
+	return ticker.C
 }

@@ -567,6 +567,36 @@ limit ?
 	return out, rows.Err()
 }
 
+func (s *Store) RenameChannel(ctx context.Context, channelID string, name string) error {
+	_, err := s.db.ExecContext(ctx, `
+update channels
+set name = ?, updated_at = ?
+where id = ?
+`, name, time.Now().UTC().Format(time.RFC3339), channelID)
+	return err
+}
+
+func (s *Store) SetChannelArchived(ctx context.Context, channelID string, archived bool) error {
+	_, err := s.db.ExecContext(ctx, `
+update channels
+set is_archived = ?, updated_at = ?
+where id = ?
+`, boolInt(archived), time.Now().UTC().Format(time.RFC3339), channelID)
+	return err
+}
+
+func (s *Store) GetSyncState(ctx context.Context, source, entityType, entityID string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `
+select value from sync_state
+where source_name = ? and entity_type = ? and entity_id = ?
+`, source, entityType, entityID).Scan(&value)
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
 func MarshalRaw(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {

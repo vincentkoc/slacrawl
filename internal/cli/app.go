@@ -75,7 +75,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	case "channels":
 		return a.runChannels(ctx, *configPath, rest[1:], *jsonOut)
 	case "tail":
-		return a.runTail(ctx, *configPath)
+		return a.runTail(*configPath, rest[1:])
 	default:
 		return fmt.Errorf("unknown command: %s", rest[0])
 	}
@@ -363,12 +363,28 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 	return a.write(jsonOut, results)
 }
 
-func (a *App) runTail(_ context.Context, configPath string) error {
-	_, err := loadConfig(configPath)
+func (a *App) runTail(configPath string, args []string) error {
+	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return err
 	}
-	return errors.New("tail bootstrap is not implemented yet; use doctor to validate xapp/xoxb tokens and sync for backfill")
+	fs := flag.NewFlagSet("tail", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	workspaceID := fs.String("workspace", "", "workspace id")
+	repairEvery := fs.String("repair-every", cfg.Sync.RepairEvery, "repair interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	repairDuration, err := time.ParseDuration(*repairEvery)
+	if err != nil {
+		return err
+	}
+	return slackapi.New(cfg.ResolveTokens()).Tail(context.Background(), st, coalesce(*workspaceID, cfg.WorkspaceID), repairDuration)
 }
 
 func (a *App) write(jsonOut bool, value any) error {

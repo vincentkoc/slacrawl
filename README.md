@@ -13,6 +13,7 @@ It is a local-first Go CLI. V1 supports Slack Web API ingestion and macOS Slack 
 - records structured mentions for direct querying
 - exposes read-only SQL for ad hoc analysis
 - reports desktop-local Slack cache availability on macOS
+- tails Socket Mode events when an app-level token is configured
 
 ## V1 Scope
 
@@ -61,6 +62,7 @@ bin/slacrawl init
 bin/slacrawl doctor
 bin/slacrawl sync --source api --full
 bin/slacrawl search "incident"
+bin/slacrawl tail --repair-every 30m
 ```
 
 ## Commands
