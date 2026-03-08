@@ -17,6 +17,12 @@ const members = Object.values(value.members || {}).filter(
 );
 const messages = [];
 const seenMessages = new Set();
+const workspaceId =
+  value.selfTeamIds?.teamId ||
+  value.selfTeamIds?.defaultWorkspaceId ||
+  value.bootData?.team_id ||
+  "";
+const userId = value.bootData?.user_id || "";
 
 function looksLikeMessage(entry) {
   if (!entry || typeof entry !== "object") {
@@ -119,6 +125,8 @@ for (const [channelID, threadState] of Object.entries(value.threads || {})) {
 
 process.stdout.write(
   JSON.stringify({
+    workspace_id: workspaceId,
+    user_id: userId,
     channels,
     members,
     messages,

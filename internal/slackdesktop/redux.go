@@ -9,23 +9,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/golang/snappy"
 	"github.com/slack-go/slack"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/vincentkoc/slacrawl/internal/search"
 	"github.com/vincentkoc/slacrawl/internal/store"
 )
 
 const (
-	indexedDBBlobDir      = "IndexedDB/https_app.slack.com_0.indexeddb.blob"
-	indexedDBSourceName   = "desktop-indexeddb"
-	reduxPersistKeyPrefix = "persist:slack-client-"
+	indexedDBBlobDir    = "IndexedDB/https_app.slack.com_0.indexeddb.blob"
+	indexedDBSourceName = "desktop-indexeddb"
 )
 
 var reduxV8Header = []byte{0xff, 0x0f}
@@ -97,10 +94,9 @@ type ReduxEdited struct {
 }
 
 type reduxBlobRef struct {
+	Path        string
 	WorkspaceID string
 	UserID      string
-	DirToken    byte
-	FileToken   byte
 }
 
 func ExtractIndexedDBStates(path string) ([]ReduxDecodedState, error) {
@@ -108,21 +104,43 @@ func ExtractIndexedDBStates(path string) ([]ReduxDecodedState, error) {
 		return nil, nil
 	}
 
-	refs, err := parseReduxBlobRefs(filepath.Join(path, indexedDBDir), filepath.Join(path, indexedDBBlobDir))
+	refs, err := scanReduxBlobRefs(filepath.Join(path, indexedDBBlobDir))
 	if err != nil {
 		return nil, err
 	}
 
-	states := make([]ReduxDecodedState, 0, len(refs))
+	byIdentity := map[string]ReduxDecodedState{}
 	for _, ref := range refs {
-		state, err := decodeReduxBlob(ref.blobPath(filepath.Join(path, indexedDBBlobDir)))
+		state, err := decodeReduxBlob(ref.Path)
 		if err != nil {
 			continue
 		}
-		state.WorkspaceID = ref.WorkspaceID
-		state.UserID = ref.UserID
+		if state.WorkspaceID == "" {
+			state.WorkspaceID = ref.WorkspaceID
+		}
+		if state.UserID == "" {
+			state.UserID = ref.UserID
+		}
+		if state.WorkspaceID == "" && state.UserID == "" {
+			continue
+		}
+		key := state.WorkspaceID + "|" + state.UserID
+		current, ok := byIdentity[key]
+		if !ok || reduxStateScore(state) > reduxStateScore(current) {
+			byIdentity[key] = state
+		}
+	}
+
+	states := make([]ReduxDecodedState, 0, len(byIdentity))
+	for _, state := range byIdentity {
 		states = append(states, state)
 	}
+	sort.Slice(states, func(i, j int) bool {
+		if states[i].WorkspaceID == states[j].WorkspaceID {
+			return states[i].UserID < states[j].UserID
+		}
+		return states[i].WorkspaceID < states[j].WorkspaceID
+	})
 	return states, nil
 }
 
@@ -224,60 +242,28 @@ func ingestReduxStates(ctx context.Context, st *store.Store, states []ReduxDecod
 	return nil
 }
 
-func parseReduxBlobRefs(indexedDBPath string, blobRoot string) ([]reduxBlobRef, error) {
-	db, err := leveldb.OpenFile(indexedDBPath, &opt.Options{ReadOnly: true, Comparer: indexedDBComparer{}})
+func scanReduxBlobRefs(blobRoot string) ([]reduxBlobRef, error) {
+	var refs []reduxBlobRef
+	err := filepath.Walk(blobRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info == nil || info.IsDir() {
+			return nil
+		}
+		refs = append(refs, reduxBlobRef{Path: path})
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
-
-	refs := map[string]*reduxBlobRef{}
-	iter := db.NewIterator(nil, nil)
-	defer iter.Release()
-	for iter.Next() {
-		dbid, osid, idx, rest, ok := decodeIndexedDBPrefix(iter.Key())
-		if !ok || dbid != 1 || osid != 1 {
-			continue
-		}
-		key := decodeIndexedDBStringKey(rest)
-		if !strings.HasPrefix(key, reduxPersistKeyPrefix) {
-			continue
-		}
-		workspaceID, userID, ok := parseReduxPersistKey(key)
-		if !ok {
-			continue
-		}
-		ref := refs[key]
-		if ref == nil {
-			ref = &reduxBlobRef{WorkspaceID: workspaceID, UserID: userID}
-			refs[key] = ref
-		}
-		switch idx {
-		case 2:
-			if len(iter.Value()) >= 2 {
-				ref.DirToken = iter.Value()[1]
-			}
-		case 3:
-			if len(iter.Value()) >= 2 {
-				ref.FileToken = iter.Value()[1]
-			}
-		}
-	}
-	if err := iter.Error(); err != nil {
-		return nil, err
-	}
-
-	out := make([]reduxBlobRef, 0, len(refs))
-	for _, ref := range refs {
-		if ref.DirToken == 0 || ref.FileToken == 0 {
-			continue
-		}
-		if _, err := os.Stat(ref.blobPath(blobRoot)); err != nil {
-			continue
-		}
-		out = append(out, *ref)
-	}
-	return out, nil
+	sort.Slice(refs, func(i, j int) bool {
+		return refs[i].Path < refs[j].Path
+	})
+	return refs, nil
 }
 
 func decodeReduxBlob(blobPath string) (ReduxDecodedState, error) {
@@ -324,78 +310,6 @@ func decodeReduxBlob(blobPath string) (ReduxDecodedState, error) {
 		return ReduxDecodedState{}, err
 	}
 	return state, nil
-}
-
-func decodeIndexedDBPrefix(key []byte) (dbid int, objectStoreID int, indexID int, rest []byte, ok bool) {
-	if len(key) < 1 {
-		return 0, 0, 0, nil, false
-	}
-	header := key[0]
-	dbLen := int((header>>5)&0x07) + 1
-	storeLen := int((header>>2)&0x07) + 1
-	indexLen := int(header&0x03) + 1
-	need := 1 + dbLen + storeLen + indexLen
-	if len(key) < need {
-		return 0, 0, 0, nil, false
-	}
-
-	offset := 1
-	read := func(size int) int {
-		value := 0
-		for i := 0; i < size; i++ {
-			value |= int(key[offset+i]) << (8 * i)
-		}
-		offset += size
-		return value
-	}
-
-	dbid = read(dbLen)
-	objectStoreID = read(storeLen)
-	indexID = read(indexLen)
-	return dbid, objectStoreID, indexID, key[need:], true
-}
-
-func decodeIndexedDBStringKey(key []byte) string {
-	if len(key) == 0 || key[0] != 0x01 {
-		return ""
-	}
-	length, used := decodeVarInt(key[1:])
-	if used == 0 {
-		return ""
-	}
-	raw := key[1+used:]
-	if len(raw) < length*2 {
-		return ""
-	}
-	data := make([]uint16, 0, length)
-	for i := 0; i < length*2; i += 2 {
-		data = append(data, uint16(raw[i])<<8|uint16(raw[i+1]))
-	}
-	return string(utf16.Decode(data))
-}
-
-func parseReduxPersistKey(key string) (workspaceID string, userID string, ok bool) {
-	if !strings.HasPrefix(key, reduxPersistKeyPrefix) {
-		return "", "", false
-	}
-	parts := strings.Split(strings.TrimPrefix(key, reduxPersistKeyPrefix), "-")
-	if len(parts) < 2 {
-		return "", "", false
-	}
-	return parts[0], parts[1], true
-}
-
-func decodeVarInt(data []byte) (int, int) {
-	value := 0
-	shift := 0
-	for index, b := range data {
-		value |= int(b&0x7f) << shift
-		if b < 0x80 {
-			return value, index + 1
-		}
-		shift += 7
-	}
-	return 0, 0
 }
 
 func reduxChannelKind(channel ReduxChannel) string {
@@ -455,8 +369,6 @@ func editedTS(message ReduxMessage) string {
 	return message.Edited.TS
 }
 
-func (r reduxBlobRef) blobPath(blobRoot string) string {
-	dir := fmt.Sprintf("%02x", r.DirToken)
-	file := fmt.Sprintf("%s%02x", dir, r.FileToken)
-	return filepath.Join(blobRoot, "1", dir, file)
+func reduxStateScore(state ReduxDecodedState) int {
+	return len(state.Channels)*1000 + len(state.Members)*10 + len(state.Messages)
 }
