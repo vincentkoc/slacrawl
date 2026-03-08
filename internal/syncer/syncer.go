@@ -3,8 +3,6 @@ package syncer
 import (
 	"context"
 	"errors"
-	"strings"
-	"time"
 
 	"github.com/vincentkoc/slacrawl/internal/config"
 	"github.com/vincentkoc/slacrawl/internal/slackapi"
@@ -62,21 +60,8 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, opts Options) 
 }
 
 func syncDesktop(ctx context.Context, cfg config.Config, st *store.Store) (Summary, error) {
-	source, err := slackdesktop.Discover(cfg.Slack.Desktop.Path)
+	source, err := slackdesktop.Ingest(ctx, st, cfg.Slack.Desktop.Path)
 	if err != nil {
-		return Summary{}, err
-	}
-	if !source.Available {
-		return Summary{Desktop: source}, nil
-	}
-	if err := st.SetSyncState(ctx, "desktop", "root_state", "path", source.Path); err != nil {
-		return Summary{}, err
-	}
-	payload := []byte(strings.Join(source.Summary.AppTeamsKeys, ","))
-	if err := st.SetSyncState(ctx, "desktop", "root_state", "app_teams", string(payload)); err != nil {
-		return Summary{}, err
-	}
-	if err := st.SetSyncState(ctx, "desktop", "root_state", "scanned_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return Summary{}, err
 	}
 	return Summary{Desktop: source}, nil

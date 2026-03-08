@@ -6,12 +6,14 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/slack-go/slack v0.17.3
 	github.com/stretchr/testify v1.11.1
+	github.com/syndtr/goleveldb v1.0.0
 	modernc.org/sqlite v1.46.1
 )
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

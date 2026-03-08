@@ -3,6 +3,19 @@
     "T111": {},
     "T222": {}
   },
+  "downloads": {
+    "T111": {
+      "F111": {
+        "id": "F111",
+        "teamId": "T111",
+        "userId": "U111",
+        "url": "https://files.slack.com/example",
+        "appVersion": "4.44.65",
+        "downloadState": "completed",
+        "downloadPath": "/tmp/example.txt"
+      }
+    }
+  },
   "teams": {
     "T111": {}
   },
