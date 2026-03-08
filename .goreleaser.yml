@@ -1,0 +1,69 @@
+version: 2
+
+project_name: slacrawl
+
+builds:
+  - id: slacrawl
+    main: ./cmd/slacrawl
+    binary: slacrawl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - id: bundles
+    ids:
+      - slacrawl
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - config.example.toml
+      - SPEC.md
+
+checksum:
+  name_template: "sha256sums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^Merge pull request"
+      - "^Merge branch"
+
+nfpms:
+  - id: linux-packages
+    ids:
+      - slacrawl
+    package_name: slacrawl
+    file_name_template: "{{ .ConventionalFileName }}"
+    homepage: https://github.com/vincentkoc/slacrawl
+    maintainer: Vincent Koc <vincent@vincentkoc.com>
+    description: Local-first Slack workspace crawler with SQLite-backed search and querying.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    contents:
+      - src: ./README.md
+        dst: /usr/share/doc/slacrawl/README.md
+      - src: ./LICENSE
+        dst: /usr/share/doc/slacrawl/LICENSE
+      - src: ./config.example.toml
+        dst: /usr/share/doc/slacrawl/config.example.toml
