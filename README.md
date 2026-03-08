@@ -67,7 +67,7 @@ If one of those gaps matters to your workflow, open an issue so it can be tracke
 
 ## Install
 
-<details>
+<details open>
 <summary>Homebrew (macOS)</summary>
 
 ```bash
