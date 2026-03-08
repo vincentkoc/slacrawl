@@ -34,6 +34,7 @@ type SlackConfig struct {
 }
 
 type TokenConfig struct {
+	Enabled  bool   `toml:"enabled"`
 	TokenEnv string `toml:"token_env"`
 }
 
@@ -43,9 +44,10 @@ type DesktopConfig struct {
 }
 
 type SyncConfig struct {
-	Concurrency int    `toml:"concurrency"`
-	RepairEvery string `toml:"repair_every"`
-	FullHistory bool   `toml:"full_history"`
+	Concurrency         int    `toml:"concurrency"`
+	RepairEvery         string `toml:"repair_every"`
+	DesktopRefreshEvery string `toml:"desktop_refresh_every"`
+	FullHistory         bool   `toml:"full_history"`
 }
 
 type SearchConfig struct {
@@ -66,18 +68,19 @@ func Default() Config {
 		CacheDir: filepath.ToSlash(filepath.Join(base, "cache")),
 		LogDir:   filepath.ToSlash(filepath.Join(base, "logs")),
 		Slack: SlackConfig{
-			Bot:  TokenConfig{TokenEnv: "SLACK_BOT_TOKEN"},
-			App:  TokenConfig{TokenEnv: "SLACK_APP_TOKEN"},
-			User: TokenConfig{TokenEnv: "SLACK_USER_TOKEN"},
+			Bot:  TokenConfig{Enabled: true, TokenEnv: "SLACK_BOT_TOKEN"},
+			App:  TokenConfig{Enabled: true, TokenEnv: "SLACK_APP_TOKEN"},
+			User: TokenConfig{Enabled: true, TokenEnv: "SLACK_USER_TOKEN"},
 			Desktop: DesktopConfig{
 				Enabled: true,
-				Path:    defaultDesktopPath,
+				Path:    "",
 			},
 		},
 		Sync: SyncConfig{
-			Concurrency: 4,
-			RepairEvery: "30m",
-			FullHistory: true,
+			Concurrency:         4,
+			RepairEvery:         "30m",
+			DesktopRefreshEvery: "5m",
+			FullHistory:         true,
 		},
 		Search: SearchConfig{
 			DefaultMode: "fts",
@@ -133,6 +136,16 @@ func (c *Config) Normalize() error {
 	if c.Search.DefaultMode == "" {
 		c.Search.DefaultMode = "fts"
 	}
+	if c.Sync.DesktopRefreshEvery == "" {
+		c.Sync.DesktopRefreshEvery = "5m"
+	}
+	if c.Slack.Desktop.Enabled && strings.TrimSpace(c.Slack.Desktop.Path) == "" {
+		detected, err := DetectDesktopPath()
+		if err != nil {
+			return err
+		}
+		c.Slack.Desktop.Path = detected
+	}
 
 	paths := []*string{&c.DBPath, &c.CacheDir, &c.LogDir, &c.Slack.Desktop.Path}
 	for _, candidate := range paths {
@@ -163,11 +176,31 @@ func ExpandPath(path string) (string, error) {
 }
 
 func (c Config) ResolveTokens() Tokens {
-	return Tokens{
-		Bot:  os.Getenv(c.Slack.Bot.TokenEnv),
-		App:  os.Getenv(c.Slack.App.TokenEnv),
-		User: os.Getenv(c.Slack.User.TokenEnv),
+	tokens := Tokens{}
+	if c.Slack.Bot.Enabled {
+		tokens.Bot = os.Getenv(c.Slack.Bot.TokenEnv)
 	}
+	if c.Slack.App.Enabled {
+		tokens.App = os.Getenv(c.Slack.App.TokenEnv)
+	}
+	if c.Slack.User.Enabled {
+		tokens.User = os.Getenv(c.Slack.User.TokenEnv)
+	}
+	return tokens
+}
+
+func DetectDesktopPath() (string, error) {
+	candidates := []string{defaultDesktopPath}
+	for _, candidate := range candidates {
+		expanded, err := ExpandPath(candidate)
+		if err != nil {
+			return "", err
+		}
+		if _, err := os.Stat(expanded); err == nil {
+			return expanded, nil
+		}
+	}
+	return ExpandPath(defaultDesktopPath)
 }
 
 func ValidateTokenShape(value string, prefix string) error {

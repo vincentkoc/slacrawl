@@ -75,7 +75,9 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	case "channels":
 		return a.runChannels(ctx, *configPath, rest[1:], *jsonOut)
 	case "tail":
-		return a.runTail(*configPath, rest[1:])
+		return a.runTail(ctx, *configPath, rest[1:])
+	case "watch":
+		return a.runWatch(ctx, *configPath, rest[1:], *jsonOut)
 	default:
 		return fmt.Errorf("unknown command: %s", rest[0])
 	}
@@ -124,9 +126,12 @@ func (a *App) runDoctor(ctx context.Context, configPath string, jsonOut bool) er
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
-	desktop, err := slackdesktop.Discover(cfg.Slack.Desktop.Path)
-	if err != nil {
-		return err
+	desktop := slackdesktop.Source{Path: cfg.Slack.Desktop.Path, Available: false}
+	if cfg.Slack.Desktop.Enabled {
+		desktop, err = slackdesktop.Discover(cfg.Slack.Desktop.Path)
+		if err != nil {
+			return err
+		}
 	}
 	threadCoverage := diag.ThreadCoverage
 	if threadCoverage == "" {
@@ -144,12 +149,15 @@ func (a *App) runDoctor(ctx context.Context, configPath string, jsonOut bool) er
 		"config_path":   configPath,
 		"database_path": cfg.DBPath,
 		"tokens": map[string]any{
-			"bot_env":  cfg.Slack.Bot.TokenEnv,
-			"app_env":  cfg.Slack.App.TokenEnv,
-			"user_env": cfg.Slack.User.TokenEnv,
-			"bot_set":  cfg.ResolveTokens().Bot != "",
-			"app_set":  cfg.ResolveTokens().App != "",
-			"user_set": cfg.ResolveTokens().User != "",
+			"bot_env":      cfg.Slack.Bot.TokenEnv,
+			"app_env":      cfg.Slack.App.TokenEnv,
+			"user_env":     cfg.Slack.User.TokenEnv,
+			"bot_enabled":  cfg.Slack.Bot.Enabled,
+			"app_enabled":  cfg.Slack.App.Enabled,
+			"user_enabled": cfg.Slack.User.Enabled,
+			"bot_set":      cfg.ResolveTokens().Bot != "",
+			"app_set":      cfg.ResolveTokens().App != "",
+			"user_set":     cfg.ResolveTokens().User != "",
 		},
 		"slack_api":      diag,
 		"desktop_source": desktop,
@@ -363,7 +371,7 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 	return a.write(jsonOut, results)
 }
 
-func (a *App) runTail(configPath string, args []string) error {
+func (a *App) runTail(ctx context.Context, configPath string, args []string) error {
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return err
@@ -384,7 +392,67 @@ func (a *App) runTail(configPath string, args []string) error {
 	if err != nil {
 		return err
 	}
-	return slackapi.New(cfg.ResolveTokens()).Tail(context.Background(), st, coalesce(*workspaceID, cfg.WorkspaceID), repairDuration)
+	return slackapi.New(cfg.ResolveTokens()).Tail(ctx, st, coalesce(*workspaceID, cfg.WorkspaceID), repairDuration)
+}
+
+func (a *App) runWatch(ctx context.Context, configPath string, args []string, jsonOut bool) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	desktopEvery := fs.String("desktop-every", cfg.Sync.DesktopRefreshEvery, "desktop refresh interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if !cfg.Slack.Desktop.Enabled {
+		return errors.New("desktop sync is disabled in config")
+	}
+	interval, err := time.ParseDuration(*desktopEvery)
+	if err != nil {
+		return err
+	}
+	if interval <= 0 {
+		return errors.New("desktop refresh interval must be greater than zero")
+	}
+
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	syncOnce := func() error {
+		summary, err := syncer.Run(ctx, cfg, st, syncer.Options{Source: syncer.SourceDesktop})
+		if err != nil {
+			return err
+		}
+		status, err := st.Status(ctx)
+		if err != nil {
+			return err
+		}
+		return a.write(jsonOut, map[string]any{
+			"status":  status,
+			"summary": summary,
+		})
+	}
+	if err := syncOnce(); err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := syncOnce(); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (a *App) write(jsonOut bool, value any) error {
@@ -402,7 +470,7 @@ func (a *App) write(jsonOut bool, value any) error {
 }
 
 func (a *App) printHelp() {
-	_, _ = fmt.Fprintln(a.Stdout, "slacrawl commands: init doctor sync tail search messages mentions sql users channels status")
+	_, _ = fmt.Fprintln(a.Stdout, "slacrawl commands: init doctor sync tail watch search messages mentions sql users channels status")
 }
 
 func loadConfig(path string) (config.Config, error) {

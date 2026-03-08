@@ -5,21 +5,25 @@ cache_dir = "~/.slacrawl/cache"
 log_dir = "~/.slacrawl/logs"
 
 [slack.bot]
+enabled = true
 token_env = "SLACK_BOT_TOKEN"
 
 [slack.app]
+enabled = true
 token_env = "SLACK_APP_TOKEN"
 
 [slack.user]
+enabled = true
 token_env = "SLACK_USER_TOKEN"
 
 [slack.desktop]
 enabled = true
-path = "~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack"
+path = ""
 
 [sync]
 concurrency = 4
 repair_every = "30m"
+desktop_refresh_every = "5m"
 full_history = true
 
 [search]

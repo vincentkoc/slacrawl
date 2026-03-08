@@ -60,6 +60,9 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, opts Options) 
 }
 
 func syncDesktop(ctx context.Context, cfg config.Config, st *store.Store) (Summary, error) {
+	if !cfg.Slack.Desktop.Enabled {
+		return Summary{Desktop: slackdesktop.Source{Path: cfg.Slack.Desktop.Path, Available: false}}, nil
+	}
 	source, err := slackdesktop.Ingest(ctx, st, cfg.Slack.Desktop.Path)
 	if err != nil {
 		return Summary{}, err

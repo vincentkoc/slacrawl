@@ -26,6 +26,21 @@ func TestResolveTokens(t *testing.T) {
 	require.Equal(t, "xoxp-test", tokens.User)
 }
 
+func TestResolveTokensHonorsEnabledFlags(t *testing.T) {
+	t.Setenv("SLACK_BOT_TOKEN", "xoxb-test")
+	t.Setenv("SLACK_APP_TOKEN", "xapp-test")
+	t.Setenv("SLACK_USER_TOKEN", "xoxp-test")
+
+	cfg := Default()
+	cfg.Slack.App.Enabled = false
+	cfg.Slack.User.Enabled = false
+
+	tokens := cfg.ResolveTokens()
+	require.Equal(t, "xoxb-test", tokens.Bot)
+	require.Equal(t, "", tokens.App)
+	require.Equal(t, "", tokens.User)
+}
+
 func TestSaveAndLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -44,6 +59,13 @@ func TestDefaultConfigPath(t *testing.T) {
 	path, err := DefaultConfigPath()
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(mustHome(t), ".slacrawl", "config.toml"), path)
+}
+
+func TestNormalizeAutoDetectsDesktopPath(t *testing.T) {
+	cfg := Default()
+	cfg.Slack.Desktop.Path = ""
+	require.NoError(t, cfg.Normalize())
+	require.True(t, filepath.IsAbs(cfg.Slack.Desktop.Path))
 }
 
 func mustHome(t *testing.T) string {
