@@ -363,10 +363,18 @@ on conflict(channel_id, ts) do update set
 	if err != nil {
 		return err
 	}
+	seenMentions := map[string]struct{}{}
 	for _, mention := range mentions {
+		key := mention.Type + "|" + mention.TargetID + "|" + mention.DisplayText
+		if _, ok := seenMentions[key]; ok {
+			continue
+		}
+		seenMentions[key] = struct{}{}
 		if _, err := tx.ExecContext(ctx, `
 insert into message_mentions (channel_id, ts, mention_type, target_id, display_text)
 values (?, ?, ?, ?, ?)
+on conflict(channel_id, ts, mention_type, target_id) do update set
+  display_text=excluded.display_text
 `, message.ChannelID, message.TS, mention.Type, mention.TargetID, mention.DisplayText); err != nil {
 			return err
 		}

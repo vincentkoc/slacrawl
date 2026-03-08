@@ -281,6 +281,7 @@ func (c *Client) fetchChannels(ctx context.Context, workspaceID string) ([]slack
 
 func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, opts SyncOptions, now time.Time, userRepliesAvailable bool) error {
 	cursor := ""
+	joined := false
 	for {
 		resp, err := c.getConversationHistory(ctx, c.bot, &slack.GetConversationHistoryParameters{
 			ChannelID: channel.ID,
@@ -289,6 +290,19 @@ func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, works
 			Oldest:    opts.Since,
 		})
 		if err != nil {
+			if !joined && channelSkipReason(err) == "not_in_channel" && !channel.IsPrivate {
+				joinErr := c.joinConversation(ctx, channel.ID)
+				if joinErr == nil {
+					joined = true
+					if setErr := st.SetSyncState(ctx, SourceBot, "channel_join", channel.ID, "joined"); setErr != nil {
+						return setErr
+					}
+					continue
+				}
+				if setErr := st.SetSyncState(ctx, SourceBot, "channel_join", channel.ID, "failed:"+authErrorReason(joinErr)); setErr != nil {
+					return setErr
+				}
+			}
 			if isChannelHistorySkipped(err) {
 				return st.SetSyncState(ctx, SourceBot, "channel_skip", channel.ID, channelSkipReason(err))
 			}
@@ -463,6 +477,17 @@ func (c *Client) getUsers(ctx context.Context, client *slack.Client) ([]slack.Us
 	return retry(ctx, c.sleep, 3, func() ([]slack.User, error) {
 		return client.GetUsersContext(ctx)
 	})
+}
+
+func (c *Client) joinConversation(ctx context.Context, channelID string) error {
+	if c.bot == nil {
+		return errors.New("SLACK_BOT_TOKEN is required for join")
+	}
+	_, err := retry(ctx, c.sleep, 3, func() (struct{}, error) {
+		_, _, _, err := c.bot.JoinConversationContext(ctx, channelID)
+		return struct{}{}, err
+	})
+	return err
 }
 
 func toStoreChannel(workspaceID string, channel slack.Channel, now time.Time) store.Channel {

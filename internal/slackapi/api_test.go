@@ -164,6 +164,31 @@ func TestSyncUsesConfiguredConcurrencyForChannelHistory(t *testing.T) {
 	require.Len(t, rows, 2)
 }
 
+func TestSyncJoinsPublicChannelBeforeRetryingHistory(t *testing.T) {
+	server := newJoinRetrySlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot: "xoxb-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	err := client.Sync(context.Background(), st, SyncOptions{})
+	require.NoError(t, err)
+
+	rows, err := st.Messages(context.Background(), "C111", "", 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "joined message", rows[0].Text)
+
+	joinState, err := st.GetSyncState(context.Background(), SourceBot, "channel_join", "C111")
+	require.NoError(t, err)
+	require.Equal(t, "joined", joinState)
+}
+
 func TestHandleEventsAPIEventUpdatesStore(t *testing.T) {
 	st := mustStore(t)
 	defer st.Close()
@@ -502,6 +527,37 @@ func newConcurrentHistorySlackServer(t *testing.T) *mockSlackServer {
 			mock.activeHistory--
 			mock.mu.Unlock()
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"ok":true,"messages":[{"type":"message","channel":"%s","user":"U123","text":"msg-%s","ts":"1710000000.000100"}],"response_metadata":{"next_cursor":""}}`, channel, channel)))
+		case "/users.list":
+			_, _ = w.Write([]byte(`{"ok":true,"members":[],"response_metadata":{"next_cursor":""}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return mock
+}
+
+func newJoinRetrySlackServer(t *testing.T) *mockSlackServer {
+	t.Helper()
+	mock := &mockSlackServer{counts: map[string]int{}, lastOld: map[string]string{}}
+	mock.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/auth.test":
+			_, _ = w.Write([]byte(`{"ok":true,"team":"Test Team","team_id":"T123","user":"bot","user_id":"Ubot","bot_id":"B123"}`))
+		case "/conversations.list":
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C111","name":"public","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":false,"topic":{"value":""},"purpose":{"value":""}}],"response_metadata":{"next_cursor":""}}`))
+		case "/conversations.history":
+			mock.mu.Lock()
+			mock.counts[r.URL.Path]++
+			count := mock.counts[r.URL.Path]
+			mock.mu.Unlock()
+			if count == 1 {
+				_, _ = w.Write([]byte(`{"ok":false,"error":"not_in_channel"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","channel":"C111","user":"U123","text":"joined message","ts":"1710000000.000100"}],"response_metadata":{"next_cursor":""}}`))
+		case "/conversations.join":
+			_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"C111","name":"public"}}`))
 		case "/users.list":
 			_, _ = w.Write([]byte(`{"ok":true,"members":[],"response_metadata":{"next_cursor":""}}`))
 		default:

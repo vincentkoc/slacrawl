@@ -49,3 +49,31 @@ func TestStoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, status.Messages)
 }
+
+func TestUpsertMessageDeduplicatesMentions(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	ctx := context.Background()
+	require.NoError(t, s.UpsertMessage(ctx, Message{
+		ChannelID:      "C1",
+		TS:             "123.45",
+		WorkspaceID:    "T1",
+		Text:           "<@U1> hello <@U1>",
+		NormalizedText: "@u1 hello @u1",
+		SourceRank:     2,
+		SourceName:     "api-bot",
+		RawJSON:        "{}",
+		UpdatedAt:      time.Now().UTC(),
+	}, []Mention{
+		{Type: "user", TargetID: "U1", DisplayText: "alice"},
+		{Type: "user", TargetID: "U1", DisplayText: "alice"},
+	}))
+
+	rows, err := s.QueryReadOnly(ctx, "select count(*) as n from message_mentions where channel_id = 'C1' and ts = '123.45'")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, int64(1), rows[0]["n"])
+}
