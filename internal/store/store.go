@@ -231,6 +231,13 @@ type ChannelSyncCursor struct {
 	LatestTS string
 }
 
+type SyncStateRow struct {
+	SourceName string `json:"source_name"`
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+	Value      string `json:"value"`
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
@@ -628,6 +635,31 @@ where source_name = ? and entity_type = ? and entity_id = ?
 		return "", err
 	}
 	return value, nil
+}
+
+func (s *Store) ListSyncState(ctx context.Context, source, entityType string, limit int) ([]SyncStateRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+select source_name, entity_type, entity_id, value
+from sync_state
+where (? = '' or source_name = ?)
+  and (? = '' or entity_type = ?)
+order by updated_at desc, entity_id asc
+limit ?
+`, source, source, entityType, entityType, RequireLimit(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SyncStateRow
+	for rows.Next() {
+		var row SyncStateRow
+		if err := rows.Scan(&row.SourceName, &row.EntityType, &row.EntityID, &row.Value); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 func MarshalRaw(v any) string {

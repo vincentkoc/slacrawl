@@ -144,6 +144,14 @@ func (a *App) runDoctor(ctx context.Context, configPath string, jsonOut bool) er
 	if err != nil {
 		return err
 	}
+	channelSkips, err := st.ListSyncState(ctx, "api-bot", "channel_skip", 20)
+	if err != nil {
+		return err
+	}
+	tailState, err := st.ListSyncState(ctx, "tail", "", 20)
+	if err != nil {
+		return err
+	}
 
 	report := map[string]any{
 		"config_path":   configPath,
@@ -159,10 +167,12 @@ func (a *App) runDoctor(ctx context.Context, configPath string, jsonOut bool) er
 			"app_set":      cfg.ResolveTokens().App != "",
 			"user_set":     cfg.ResolveTokens().User != "",
 		},
-		"slack_api":      diag,
-		"desktop_source": desktop,
-		"status":         status,
-		"fts_available":  true,
+		"slack_api":         diag,
+		"desktop_source":    desktop,
+		"api_channel_skips": channelSkips,
+		"tail_state":        tailState,
+		"status":            status,
+		"fts_available":     true,
 	}
 	return a.write(jsonOut, report)
 }
