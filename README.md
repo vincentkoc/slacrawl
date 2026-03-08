@@ -15,6 +15,7 @@ It is a local-first Go CLI. V1 supports Slack Web API ingestion and macOS Slack 
 - reports desktop-local Slack cache availability on macOS
 - ingests desktop-local workspace metadata, channels, users, cached channel messages, drafts, read markers, recent-channel hints, and custom-status metadata
 - tails Socket Mode events when an app-level token is configured
+- can periodically refresh desktop-local state with `watch`
 
 ## V1 Scope
 
@@ -65,6 +66,7 @@ bin/slacrawl doctor
 bin/slacrawl sync --source api --full
 bin/slacrawl search "incident"
 bin/slacrawl tail --repair-every 30m
+bin/slacrawl watch --desktop-every 5m
 ```
 
 ## Commands
@@ -73,6 +75,7 @@ bin/slacrawl tail --repair-every 30m
 - `doctor`
 - `sync`
 - `tail`
+- `watch`
 - `search`
 - `messages`
 - `mentions`
@@ -91,3 +94,10 @@ Default runtime paths:
 - logs: `~/.slacrawl/logs/`
 
 See [`SPEC.md`](./SPEC.md) for the full product contract and [`config.example.toml`](./config.example.toml) for a starting config.
+
+Desktop config notes:
+
+- set `[slack.desktop].enabled = false` to disable desktop ingestion
+- leave `[slack.desktop].path = ""` to auto-detect the macOS Slack path
+- set a custom absolute path if Slack Desktop data lives elsewhere
+- set `[slack.bot|app|user].enabled = false` to ignore that token source entirely

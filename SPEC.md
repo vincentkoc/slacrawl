@@ -119,6 +119,7 @@ Commands:
 - `doctor`
 - `sync`
 - `tail`
+- `watch`
 - `search`
 - `messages`
 - `mentions`
@@ -164,7 +165,19 @@ Requirements:
 - app-level token required
 - reconnect automatically
 - write checkpoints
-- periodic repair sync later
+- periodic incremental repair sync
+
+### `watch`
+
+Purpose:
+
+- periodic desktop-local refresh loop
+
+Requirements:
+
+- desktop source must be enabled
+- interval defaults from config
+- append/upsert into the existing DB
 
 ## Config Spec
 
@@ -181,6 +194,9 @@ Credential model:
 - bot token: `xoxb-`
 - app token: `xapp-`
 - optional user token: `xoxp-`
+- each token source can be enabled or disabled independently
+- desktop source can be enabled or disabled independently
+- blank desktop path means auto-detect the supported macOS Slack path
 
 ## Sync Algorithm
 
