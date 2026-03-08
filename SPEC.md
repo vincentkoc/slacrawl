@@ -207,6 +207,7 @@ Credential model:
 4. inspect IndexedDB and Local Storage artifacts
 5. ingest supported desktop-local metadata:
    - workspace/user metadata from `localConfig_v2`
+   - cached channel metadata, member profiles, and channel message history from IndexedDB redux persistence blobs when `node` is available
    - draft bodies and thread draft destinations
    - recent-channel hints
    - `conversations.mark` read markers
