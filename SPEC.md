@@ -16,7 +16,8 @@ Goal:
 
 V1 scope:
 
-- one workspace at a time in CLI UX
+- multi-workspace storage
+- one or many workspaces in CLI sync and tail when explicitly configured
 - public channels
 - private channels
 - top-level messages
@@ -199,6 +200,8 @@ Credential model:
 - each token source can be enabled or disabled independently
 - desktop source can be enabled or disabled independently
 - blank desktop path means auto-detect the supported macOS Slack path
+- optional `[[workspaces]]` entries can override bot/app/user token env vars per workspace
+- workspace token lookup should default to `SLACK_<WORKSPACE_ID>_BOT_TOKEN`, `SLACK_<WORKSPACE_ID>_APP_TOKEN`, and `SLACK_<WORKSPACE_ID>_USER_TOKEN`
 
 ## Sync Algorithm
 

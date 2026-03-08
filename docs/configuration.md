@@ -18,6 +18,14 @@ db_path = "~/.slacrawl/slacrawl.db"
 cache_dir = "~/.slacrawl/cache"
 log_dir = "~/.slacrawl/logs"
 
+[[workspaces]]
+id = "T01234567"
+default = true
+# uses:
+# SLACK_T01234567_BOT_TOKEN
+# SLACK_T01234567_APP_TOKEN
+# SLACK_T01234567_USER_TOKEN
+
 [slack.bot]
 enabled = true
 token_env = "SLACK_BOT_TOKEN"
@@ -43,6 +51,34 @@ full_history = true
 [search]
 default_mode = "fts"
 ```
+
+## Workspace Selection
+
+`workspace_id` remains the default CLI workspace.
+
+Use `[[workspaces]]` when you want separate bot/app/user tokens per Slack workspace, especially for multi-workspace API sync and live tailing:
+
+```toml
+[[workspaces]]
+id = "T01234567"
+default = true
+
+[[workspaces]]
+id = "T08976543"
+bot_token_env = "SLACK_CLIENT_BOT_TOKEN"
+app_token_env = "SLACK_CLIENT_APP_TOKEN"
+user_token_env = "SLACK_CLIENT_USER_TOKEN"
+```
+
+Behavior:
+
+- each workspace automatically tries `SLACK_<WORKSPACE_ID>_BOT_TOKEN`, `SLACK_<WORKSPACE_ID>_APP_TOKEN`, and `SLACK_<WORKSPACE_ID>_USER_TOKEN`
+- top-level `enabled` flags are inherited, so you do not need to repeat `enabled = true` for every workspace
+- `bot_token_env`, `app_token_env`, and `user_token_env` are optional overrides when you do not want the default env naming convention
+- `sync --source api` without `--workspace` runs against every configured `[[workspaces]]` entry
+- `tail` without `--workspace` starts one live tail per configured `[[workspaces]]` entry
+- `search`, `messages`, `mentions`, `users`, and `channels` accept `--workspace` to filter the shared SQLite database
+- if `[[workspaces]]` is empty, the legacy top-level `[slack.*]` token config is used
 
 ## Token Sources
 

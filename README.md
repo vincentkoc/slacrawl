@@ -36,7 +36,9 @@ Data stays on your machine. You can run it in API mode, desktop mode, or a hybri
 
 ## Current Coverage
 
-- one workspace at a time
+- multi-workspace storage and filtering
+- multi-workspace API sync when `[[workspaces]]` is configured
+- multi-workspace live tailing when per-workspace app tokens are configured
 - public channels
 - private channels
 - top-level messages
@@ -131,7 +133,7 @@ export SLACK_USER_TOKEN="xoxp-..."
 go run ./cmd/slacrawl init
 go run ./cmd/slacrawl doctor
 go run ./cmd/slacrawl sync --source api
-go run ./cmd/slacrawl search "incident"
+go run ./cmd/slacrawl search --workspace T01234567 "incident"
 go run ./cmd/slacrawl tail --repair-every 30m
 go run ./cmd/slacrawl watch --desktop-every 5m
 ```
@@ -152,9 +154,9 @@ Choose the path that matches your setup:
 - `init` creates a starter config file
 - `doctor` checks config, DB access, token presence, FTS, and desktop source availability
 - `sync` performs a one-shot crawl from API, desktop, or both
-- `tail` listens for live events through Socket Mode
+- `tail` listens for live events through Socket Mode, including one tail per configured workspace
 - `watch` refreshes desktop-local state on a schedule
-- `search` runs local FTS queries
+- `search` runs local FTS queries, optionally filtered by workspace
 - `messages` lists stored messages with filters
 - `mentions` lists structured mention records
 - `sql` runs read-only SQL against the local database
@@ -218,6 +220,28 @@ go run ./cmd/slacrawl completion zsh > "${HOME}/.zsh/completions/_slacrawl"
 - logs: `~/.slacrawl/logs`
 
 ## Configuration
+
+For one workspace, keep using the top-level `[slack.bot]`, `[slack.app]`, and `[slack.user]` token config.
+
+For multiple API workspaces or multiple live wiretap/tail sessions, add `[[workspaces]]` entries with per-workspace token env vars:
+
+```toml
+workspace_id = "T01234567"
+
+[[workspaces]]
+id = "T01234567"
+default = true
+
+[[workspaces]]
+id = "T08976543"
+bot_token_env = "SLACK_CLIENT_BOT_TOKEN"
+app_token_env = "SLACK_CLIENT_APP_TOKEN"
+user_token_env = "SLACK_CLIENT_USER_TOKEN"
+```
+
+By default, each workspace entry automatically looks for `SLACK_<WORKSPACE_ID>_BOT_TOKEN`, `SLACK_<WORKSPACE_ID>_APP_TOKEN`, and `SLACK_<WORKSPACE_ID>_USER_TOKEN`, so you only need the `id` in the common case. Top-level `enabled` flags still apply globally, which avoids repeating `enabled = true` per workspace.
+
+Without `--workspace`, `sync --source api` and `tail` fan out across every configured workspace entry. Read commands such as `search`, `messages`, `mentions`, `users`, and `channels` accept `--workspace` to scope the shared local database when needed.
 
 The starter config lives in [`config.example.toml`](./config.example.toml). By default it points to these environment variables:
 

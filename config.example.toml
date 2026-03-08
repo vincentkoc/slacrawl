@@ -4,6 +4,21 @@ db_path = "~/.slacrawl/slacrawl.db"
 cache_dir = "~/.slacrawl/cache"
 log_dir = "~/.slacrawl/logs"
 
+[[workspaces]]
+id = "T01234567"
+default = true
+# uses:
+# SLACK_T01234567_BOT_TOKEN
+# SLACK_T01234567_APP_TOKEN
+# SLACK_T01234567_USER_TOKEN
+
+[[workspaces]]
+id = "T08976543"
+# override only if you do not want the default SLACK_<WORKSPACE_ID>_* names
+bot_token_env = "SLACK_CLIENT_BOT_TOKEN"
+app_token_env = "SLACK_CLIENT_APP_TOKEN"
+user_token_env = "SLACK_CLIENT_USER_TOKEN"
+
 [slack.bot]
 enabled = true
 token_env = "SLACK_BOT_TOKEN"
