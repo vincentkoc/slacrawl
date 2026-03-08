@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/vincentkoc/slacrawl/blob/main/LICENSE"><img src="https://img.shields.io/github/license/vincentkoc/slacrawl" alt="License"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/vincentkoc/slacrawl" alt="License"></a>
   <img src="https://img.shields.io/badge/go-1.25%2B-00ADD8" alt="Go 1.25+">
   <img src="https://img.shields.io/badge/storage-SQLite-003B57" alt="SQLite">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey" alt="Platform">
