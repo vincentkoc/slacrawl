@@ -55,7 +55,8 @@ type LocalStorageSummary struct {
 }
 
 type IndexedDBSummary struct {
-	ObjectStores []string `json:"object_stores"`
+	ObjectStores      []string `json:"object_stores"`
+	DecodedStateCount int      `json:"decoded_state_count"`
 }
 
 type Snapshot struct {
@@ -71,6 +72,7 @@ type ExtractedData struct {
 	ReadMarkers []ReadMarker
 	Statuses    []CustomStatusRecord
 	Expandables []ExpandableRecord
+	ReduxStates []ReduxDecodedState
 	IndexedDB   IndexedDBSummary
 }
 
@@ -232,6 +234,7 @@ func SnapshotPath(path string) (Snapshot, error) {
 		"local-settings.json",
 		localStorageDir,
 		indexedDBDir,
+		indexedDBBlobDir,
 	}
 	for _, relative := range copyTargets {
 		src := filepath.Join(path, filepath.FromSlash(relative))
@@ -264,6 +267,11 @@ func Extract(path string) (ExtractedData, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return ExtractedData{}, err
 	}
+	reduxStates, err := ExtractIndexedDBStates(path)
+	if err != nil {
+		return ExtractedData{}, err
+	}
+	indexed.DecodedStateCount = len(reduxStates)
 
 	return ExtractedData{
 		RootState:   root,
@@ -274,6 +282,7 @@ func Extract(path string) (ExtractedData, error) {
 		ReadMarkers: local.ReadMarkers,
 		Statuses:    local.Statuses,
 		Expandables: local.Expandables,
+		ReduxStates: reduxStates,
 		IndexedDB:   indexed,
 	}, nil
 }
@@ -297,6 +306,7 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 	if err != nil {
 		return Source{}, err
 	}
+	source.IndexedDB.DecodedStateCount = extracted.IndexedDB.DecodedStateCount
 
 	now := time.Now().UTC()
 	statusByWorkspaceUser := map[string][]CustomStatus{}
@@ -406,6 +416,9 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 			return Source{}, err
 		}
 	}
+	if err := ingestReduxStates(ctx, st, extracted.ReduxStates, now); err != nil {
+		return Source{}, err
+	}
 
 	if err := st.SetSyncState(ctx, sourceName, "root_state", "path", source.Path); err != nil {
 		return Source{}, err
@@ -417,6 +430,9 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string) (Source, er
 		return Source{}, err
 	}
 	if err := st.SetSyncState(ctx, sourceName, "indexeddb", "object_stores", strings.Join(source.IndexedDB.ObjectStores, ",")); err != nil {
+		return Source{}, err
+	}
+	if err := st.SetSyncState(ctx, sourceName, "indexeddb", "decoded_state_count", intString(source.IndexedDB.DecodedStateCount)); err != nil {
 		return Source{}, err
 	}
 	if err := st.SetSyncState(ctx, sourceName, "local_storage", "workspace_count", intString(source.Local.WorkspaceCount)); err != nil {

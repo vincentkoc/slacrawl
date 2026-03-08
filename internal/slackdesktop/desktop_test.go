@@ -3,9 +3,11 @@ package slackdesktop
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/golang/snappy"
 	"github.com/stretchr/testify/require"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
@@ -115,4 +117,67 @@ func TestIngestDesktopState(t *testing.T) {
 	expandableCount, err := st.GetSyncState(context.Background(), sourceName, "expandables", "T111:U111")
 	require.NoError(t, err)
 	require.Equal(t, "1", expandableCount)
+}
+
+func TestExtractIndexedDBStates(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for redux blob decoding")
+	}
+
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "IndexedDB", "https_app.slack.com_0.indexeddb.leveldb"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "IndexedDB", "https_app.slack.com_0.indexeddb.blob", "1", "cd"), 0o755))
+
+	payloadPath := filepath.Join(root, "redux.bin")
+	cmd := exec.Command("node", "-e", `
+const fs = require("fs");
+const v8 = require("v8");
+const value = {
+  channels: {
+    C111: { id: "C111", name: "general", is_channel: true, is_private: false, is_archived: false, is_general: true, context_team_id: "T111", topic: { value: "hello" }, purpose: { value: "world" } }
+  },
+  members: {
+    U111: { id: "U111", name: "vincent", team_id: "T111", real_name: "Vincent", is_bot: false, deleted: false, profile: { real_name: "Vincent", display_name: "Vin", title: "Founder" } }
+  },
+  messages: {
+    C111: {
+      "1710000001.000200": { channel: "C111", ts: "1710000001.000200", type: "message", user: "U111", text: "hello <@U222|alice>", reply_count: 1, latest_reply: "1710000002.000300" }
+    }
+  }
+};
+fs.writeFileSync(process.argv[1], v8.serialize(value));
+`, payloadPath)
+	require.NoError(t, cmd.Run())
+
+	serialized, err := os.ReadFile(payloadPath)
+	require.NoError(t, err)
+	blobPayload := append([]byte{0xff, 0x11, 0x02}, snappy.Encode(nil, serialized)...)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IndexedDB", "https_app.slack.com_0.indexeddb.blob", "1", "cd", "cd9a"), blobPayload, 0o644))
+
+	db, err := leveldb.OpenFile(filepath.Join(root, "IndexedDB", "https_app.slack.com_0.indexeddb.leveldb"), &opt.Options{Comparer: indexedDBComparer{}})
+	require.NoError(t, err)
+	reduxKey := "persist:slack-client-T111-U111"
+	require.NoError(t, db.Put(encodeIndexedDBDataKey(2, reduxKey), []byte{0x7c, 0xcd}, nil))
+	require.NoError(t, db.Put(encodeIndexedDBDataKey(3, reduxKey), []byte{0x00, 0x9a}, nil))
+	require.NoError(t, db.Close())
+
+	states, err := ExtractIndexedDBStates(root)
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	require.Equal(t, "T111", states[0].WorkspaceID)
+	require.Equal(t, "U111", states[0].UserID)
+	require.Len(t, states[0].Channels, 1)
+	require.Len(t, states[0].Members, 1)
+	require.Len(t, states[0].Messages, 1)
+	require.Equal(t, "general", states[0].Channels[0].Name)
+	require.Equal(t, "hello <@U222|alice>", states[0].Messages[0].Text)
+}
+
+func encodeIndexedDBDataKey(indexID int, stringKey string) []byte {
+	key := []byte{0x00, 0x01, 0x01, byte(indexID)}
+	key = append(key, 0x01, byte(len(stringKey)))
+	for _, r := range stringKey {
+		key = append(key, byte(r>>8), byte(r))
+	}
+	return key
 }
