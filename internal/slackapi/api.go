@@ -96,9 +96,6 @@ func (c *Client) Doctor(ctx context.Context) (Diagnostics, error) {
 		UserConfigured: c.tokens.User != "",
 		ThreadCoverage: "partial",
 	}
-	if c.tokens.User != "" {
-		diag.ThreadCoverage = "full"
-	}
 	if c.bot == nil {
 		return diag, nil
 	}
@@ -111,10 +108,9 @@ func (c *Client) Doctor(ctx context.Context) (Diagnostics, error) {
 	diag.BotAuthTeam = resp.Team
 	diag.AppTailAvailable = c.tokens.App != ""
 
-	if c.user != nil {
-		if _, err := c.authTest(ctx, c.user); err == nil {
-			diag.UserAuthAvailable = true
-		}
+	if c.user != nil && c.userAuthAvailable(ctx) {
+		diag.UserAuthAvailable = true
+		diag.ThreadCoverage = "full"
 	}
 	return diag, nil
 }
@@ -143,6 +139,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 	}); err != nil {
 		return err
 	}
+	userRepliesAvailable := c.userAuthAvailable(ctx)
 
 	channels, err := c.fetchChannels(ctx, workspaceID)
 	if err != nil {
@@ -161,7 +158,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 		if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
 			return err
 		}
-		if err := c.syncChannelMessages(ctx, st, workspaceID, channel, opts, now); err != nil {
+		if err := c.syncChannelMessages(ctx, st, workspaceID, channel, opts, now, userRepliesAvailable); err != nil {
 			return err
 		}
 	}
@@ -177,7 +174,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 	}
 
 	threadCoverage := "partial"
-	if c.user != nil {
+	if userRepliesAvailable {
 		threadCoverage = "full"
 	}
 	if err := st.SetSyncState(ctx, "doctor", "threads", "coverage", threadCoverage); err != nil {
@@ -276,7 +273,7 @@ func (c *Client) fetchChannels(ctx context.Context, workspaceID string) ([]slack
 	}
 }
 
-func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, opts SyncOptions, now time.Time) error {
+func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, opts SyncOptions, now time.Time, userRepliesAvailable bool) error {
 	cursor := ""
 	for {
 		resp, err := c.getConversationHistory(ctx, c.bot, &slack.GetConversationHistoryParameters{
@@ -295,7 +292,7 @@ func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, works
 			if err := st.UpsertMessage(ctx, toStoreMessage(workspaceID, msg, SourceBot, 2, now), toStoreMentions(msg)); err != nil {
 				return err
 			}
-			if msg.ReplyCount > 0 && c.user != nil {
+			if msg.ReplyCount > 0 && userRepliesAvailable {
 				if err := c.syncThread(ctx, st, workspaceID, channel.ID, msg.Timestamp, now); err != nil {
 					return err
 				}
@@ -372,7 +369,7 @@ func (c *Client) repairWorkspace(ctx context.Context, st *store.Store, workspace
 			return err
 		}
 		repairSince := repairOldest(latestByChannel[channel.ID], time.Hour)
-		if err := c.syncChannelMessages(ctx, st, workspaceID, channel, SyncOptions{Since: repairSince}, now); err != nil {
+		if err := c.syncChannelMessages(ctx, st, workspaceID, channel, SyncOptions{Since: repairSince}, now, c.userAuthAvailable(ctx)); err != nil {
 			return err
 		}
 	}
@@ -619,4 +616,12 @@ func channelSkipReason(err error) string {
 		return slackErr.Err
 	}
 	return ""
+}
+
+func (c *Client) userAuthAvailable(ctx context.Context) bool {
+	if c.user == nil {
+		return false
+	}
+	_, err := c.authTest(ctx, c.user)
+	return err == nil
 }

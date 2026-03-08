@@ -72,6 +72,51 @@ func TestSyncWithoutUserTokenMarksPartialCoverage(t *testing.T) {
 	require.Equal(t, "partial", value)
 }
 
+func TestSyncWithInvalidUserTokenStillMarksPartialCoverage(t *testing.T) {
+	server := newInvalidUserSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot:  "xoxb-test",
+		User: "xoxp-invalid",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	err := client.Sync(context.Background(), st, SyncOptions{})
+	require.NoError(t, err)
+
+	value, err := st.GetSyncState(context.Background(), "doctor", "threads", "coverage")
+	require.NoError(t, err)
+	require.Equal(t, "partial", value)
+
+	rows, err := st.Messages(context.Background(), "C123", "", 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "root message", rows[0].Text)
+}
+
+func TestDoctorWithInvalidUserTokenDoesNotReportFullCoverage(t *testing.T) {
+	server := newInvalidUserSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot:  "xoxb-test",
+		App:  "xapp-test",
+		User: "xoxp-invalid",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	diag, err := client.Doctor(context.Background())
+	require.NoError(t, err)
+	require.True(t, diag.BotConfigured)
+	require.True(t, diag.UserConfigured)
+	require.False(t, diag.UserAuthAvailable)
+	require.Equal(t, "partial", diag.ThreadCoverage)
+}
+
 func TestSyncSkipsChannelsTheBotCannotRead(t *testing.T) {
 	server := newSkipChannelSlackServer(t)
 	defer server.Close()
@@ -369,6 +414,34 @@ func newSkipChannelSlackServer(t *testing.T) *mockSlackServer {
 			default:
 				http.NotFound(w, r)
 			}
+		case "/users.list":
+			_, _ = w.Write([]byte(`{"ok":true,"members":[],"response_metadata":{"next_cursor":""}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return mock
+}
+
+func newInvalidUserSlackServer(t *testing.T) *mockSlackServer {
+	t.Helper()
+	mock := &mockSlackServer{counts: map[string]int{}, lastOld: map[string]string{}}
+	mock.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		values := mustFormValues(r)
+		token := values.Get("token")
+		auth := r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/auth.test":
+			if strings.Contains(auth, "xoxp-invalid") || token == "xoxp-invalid" {
+				_, _ = w.Write([]byte(`{"ok":false,"error":"invalid_auth"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"team":"Test Team","team_id":"T123","user":"bot","user_id":"Ubot","bot_id":"B123"}`))
+		case "/conversations.list":
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C123","name":"general","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":true,"topic":{"value":"topic"},"purpose":{"value":"purpose"}}],"response_metadata":{"next_cursor":""}}`))
+		case "/conversations.history":
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","channel":"C123","user":"U123","text":"root message","ts":"1710000000.000100","reply_count":1,"latest_reply":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
 		case "/users.list":
 			_, _ = w.Write([]byte(`{"ok":true,"members":[],"response_metadata":{"next_cursor":""}}`))
 		default:
