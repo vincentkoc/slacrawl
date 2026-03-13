@@ -309,6 +309,9 @@ func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, works
 			return fmt.Errorf("channel %s history: %w", channel.ID, err)
 		}
 		for _, msg := range resp.Messages {
+			if msg.Channel == "" {
+				msg.Channel = channel.ID
+			}
 			if err := st.UpsertMessage(ctx, toStoreMessage(workspaceID, msg, SourceBot, 2, now), toStoreMentions(msg)); err != nil {
 				return err
 			}
@@ -338,6 +341,9 @@ func (c *Client) syncThread(ctx context.Context, st *store.Store, workspaceID st
 			return err
 		}
 		for _, msg := range msgs {
+			if msg.Channel == "" {
+				msg.Channel = channelID
+			}
 			if err := st.UpsertMessage(ctx, toStoreMessage(workspaceID, msg, SourceUser, 1, now), toStoreMentions(msg)); err != nil {
 				return err
 			}
