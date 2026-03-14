@@ -49,6 +49,9 @@ func TestSyncHandlesRateLimitAndThreadCoverage(t *testing.T) {
 	rows, err := st.Messages(context.Background(), "", "C123", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
+	for _, row := range rows {
+		require.Equal(t, "C123", row.ChannelID)
+	}
 	require.Equal(t, "message_replied", rows[0].Subtype)
 }
 
@@ -447,9 +450,9 @@ func newMockSlackServer(t *testing.T) *mockSlackServer {
 		case "/conversations.list":
 			_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C123","name":"general","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":true,"topic":{"value":"topic"},"purpose":{"value":"purpose"}}],"response_metadata":{"next_cursor":""}}`))
 		case "/conversations.history":
-			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","channel":"C123","user":"U123","text":"root message","ts":"1710000000.000100","reply_count":1,"latest_reply":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U123","text":"root message","ts":"1710000000.000100","reply_count":1,"latest_reply":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
 		case "/conversations.replies":
-			_, _ = w.Write([]byte(`{"ok":true,"has_more":false,"messages":[{"type":"message","subtype":"message_replied","channel":"C123","user":"U234","text":"reply message","thread_ts":"1710000000.000100","ts":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"has_more":false,"messages":[{"type":"message","subtype":"message_replied","user":"U234","text":"reply message","thread_ts":"1710000000.000100","ts":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
 		case "/users.list":
 			_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U123","name":"alice","real_name":"Alice Example","profile":{"display_name":"alice","title":"Engineer"}}],"response_metadata":{"next_cursor":""}}`))
 		default:
@@ -476,9 +479,9 @@ func newRepairSlackServer(t *testing.T) *mockSlackServer {
 			mock.mu.Lock()
 			mock.lastOld[values.Get("channel")] = values.Get("oldest")
 			mock.mu.Unlock()
-			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","channel":"C123","user":"U234","text":"new repair message","ts":"1710001200.000200"}],"response_metadata":{"next_cursor":""}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U234","text":"new repair message","ts":"1710001200.000200"}],"response_metadata":{"next_cursor":""}}`))
 		case "/conversations.replies":
-			_, _ = w.Write([]byte(`{"ok":true,"has_more":false,"messages":[{"type":"message","subtype":"message_replied","channel":"C123","user":"U234","text":"thread repair","thread_ts":"1710000000.000100","ts":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"has_more":false,"messages":[{"type":"message","subtype":"message_replied","user":"U234","text":"thread repair","thread_ts":"1710000000.000100","ts":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
 		default:
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		}
@@ -536,7 +539,7 @@ func newInvalidUserSlackServer(t *testing.T) *mockSlackServer {
 		case "/conversations.list":
 			_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C123","name":"general","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":true,"topic":{"value":"topic"},"purpose":{"value":"purpose"}}],"response_metadata":{"next_cursor":""}}`))
 		case "/conversations.history":
-			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","channel":"C123","user":"U123","text":"root message","ts":"1710000000.000100","reply_count":1,"latest_reply":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U123","text":"root message","ts":"1710000000.000100","reply_count":1,"latest_reply":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
 		case "/users.list":
 			_, _ = w.Write([]byte(`{"ok":true,"members":[],"response_metadata":{"next_cursor":""}}`))
 		default:
