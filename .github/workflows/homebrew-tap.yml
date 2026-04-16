@@ -30,7 +30,7 @@ jobs:
       - name: Checkout tap repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.HOMEBREW_TAP_REPO || 'vincentkoc/homebrew-tap' }}
+          repository: ${{ vars.HOMEBREW_TAP_REPO || 'vincentkoc/tap' }}
           token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
       - name: Update formula
