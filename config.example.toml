@@ -43,3 +43,10 @@ full_history = true
 
 [search]
 default_mode = "fts"
+
+[share]
+remote = ""
+repo_path = "~/.slacrawl/share"
+branch = "main"
+auto_update = true
+stale_after = "15m"

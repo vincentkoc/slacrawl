@@ -27,12 +27,14 @@ Data stays on your machine. You can run it in API mode, desktop mode, or a hybri
 - workspace, channel, user, and message sync
 - thread reply backfill when a user token is available
 - incremental API history sync by default, with `--full` reserved for deliberate backfills
+- `sync --latest-only` for cheap incremental refreshes on already-seeded channels
 - mention extraction for structured querying
 - read-only SQL access for ad hoc analysis
 - `doctor` diagnostics for config, database, token, and desktop-source checks
 - desktop-local ingestion of workspace metadata, channels, users, cached channel messages, drafts, read markers, recent-channel hints, and custom-status metadata
 - optional Socket Mode live tailing via app token
 - periodic desktop refresh with `watch`
+- git-backed archive publishing, subscription, and read-time auto-refresh
 
 ## Current Coverage
 
@@ -146,6 +148,7 @@ Choose the path that matches your setup:
 
 - use `sync --source api` for normal incremental syncs
 - use `sync --source api --full` only when you want a deliberate full backfill
+- use `sync --source api --latest-only` when you only want fresh deltas on channels that already have local history
 - use `sync --source desktop` when you want local desktop recovery only
 - use `watch` when you want desktop-local state to refresh into SQLite continuously
 
@@ -153,6 +156,9 @@ Choose the path that matches your setup:
 
 - `init` creates a starter config file
 - `doctor` checks config, DB access, token presence, FTS, and desktop source availability
+- `publish` exports the local SQLite archive into a git repo as compressed JSONL shards plus a manifest
+- `subscribe` configures a git-backed reader that can run without Slack credentials
+- `update` pulls and imports the latest git snapshot
 - `sync` performs a one-shot crawl from API, desktop, or both
 - `tail` listens for live events through Socket Mode, including one tail per configured workspace
 - `watch` refreshes desktop-local state on a schedule
@@ -242,6 +248,38 @@ user_token_env = "SLACK_CLIENT_USER_TOKEN"
 By default, each workspace entry automatically looks for `SLACK_<WORKSPACE_ID>_BOT_TOKEN`, `SLACK_<WORKSPACE_ID>_APP_TOKEN`, and `SLACK_<WORKSPACE_ID>_USER_TOKEN`, so you only need the `id` in the common case. Top-level `enabled` flags still apply globally, which avoids repeating `enabled = true` per workspace.
 
 Without `--workspace`, `sync --source api` and `tail` fan out across every configured workspace entry. Read commands such as `search`, `messages`, `mentions`, `users`, and `channels` accept `--workspace` to scope the shared local database when needed.
+
+Git-backed archive sharing is configured under `[share]`:
+
+```toml
+[share]
+remote = "git@github.com:your-org/private-slacrawl-archive.git"
+repo_path = "~/.slacrawl/share"
+branch = "main"
+auto_update = true
+stale_after = "15m"
+```
+
+Behavior:
+
+- `publish` writes gzipped JSONL shards plus `manifest.json` into `repo_path`
+- `subscribe` writes a git-reader config, disables Slack API and desktop sources for that config, clones the repo, and imports the snapshot
+- pass `--db` to `subscribe` when you want the reader archive to land in a non-default SQLite path
+- `update` pulls and re-imports only when the manifest changes
+- `status`, `search`, `messages`, `mentions`, `sql`, `users`, and `channels` auto-refresh stale git snapshots before reading when `auto_update = true`
+- `sync --source api` and `sync --source all` warm from the git snapshot before hitting Slack when a share remote is configured
+
+Typical publish / subscribe flow:
+
+```bash
+# publisher
+go run ./cmd/slacrawl sync --source api --latest-only
+go run ./cmd/slacrawl publish --remote /path/to/private/slacrawl-archive.git --push
+
+# subscriber
+go run ./cmd/slacrawl subscribe --repo ~/.slacrawl/share --db ~/.slacrawl/slacrawl.db /path/to/private/slacrawl-archive.git
+go run ./cmd/slacrawl search incident
+```
 
 The starter config lives in [`config.example.toml`](./config.example.toml). By default it points to these environment variables:
 

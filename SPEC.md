@@ -118,6 +118,9 @@ Commands:
 
 - `init`
 - `doctor`
+- `publish`
+- `subscribe`
+- `update`
 - `sync`
 - `tail`
 - `watch`
@@ -142,6 +145,7 @@ Expected flags:
 - `--channels <csv>`
 - `--since <timestamp>`
 - `--full`
+- `--latest-only`
 - `--concurrency <n>`
 
 ### `doctor`
@@ -203,6 +207,14 @@ Credential model:
 - optional `[[workspaces]]` entries can override bot/app/user token env vars per workspace
 - workspace token lookup should default to `SLACK_<WORKSPACE_ID>_BOT_TOKEN`, `SLACK_<WORKSPACE_ID>_APP_TOKEN`, and `SLACK_<WORKSPACE_ID>_USER_TOKEN`
 
+Share config:
+
+- `[share].remote` points at the git remote that stores compressed archive snapshots
+- `[share].repo_path` is the local clone / working repo path used for publish and update
+- `[share].branch` defaults to `main`
+- `[share].auto_update` controls whether read commands import stale git snapshots before querying
+- `[share].stale_after` defines how old the last successful import can be before auto-refresh runs
+
 ## Sync Algorithm
 
 ### API sync
@@ -215,6 +227,7 @@ Credential model:
 6. derive per-channel sync window:
    - explicit `--since` wins
    - `--full` disables incremental cutoffs
+   - `--latest-only` skips channels that do not already have a stored cursor
    - otherwise reuse the latest stored per-channel timestamp with overlap
 7. fetch users
 8. backfill message history
@@ -224,6 +237,15 @@ Credential model:
 12. upsert canonical rows
 13. update FTS rows and mentions
 14. write checkpoints, channel skips, and join attempts
+
+### Git share sync
+
+1. clone or open the configured share repo
+2. read `manifest.json`
+3. skip import when the manifest generation timestamp matches the last imported manifest
+4. otherwise clear canonical tables and import the sharded compressed JSONL snapshot
+5. rebuild FTS rows locally
+6. record last import timestamps in `sync_state`
 
 ### Desktop-local sync
 
@@ -247,6 +269,7 @@ Credential model:
 cmd/slacrawl/
 internal/cli/
 internal/config/
+internal/share/
 internal/slackapi/
 internal/slackdesktop/
 internal/store/

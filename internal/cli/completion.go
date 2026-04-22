@@ -11,6 +11,9 @@ var (
 	commandNames = []string{
 		"init",
 		"doctor",
+		"publish",
+		"subscribe",
+		"update",
 		"sync",
 		"tail",
 		"watch",
@@ -34,7 +37,10 @@ var (
 	commandFlags = map[string][]string{
 		"init":       {"--workspace", "--db", "--help", "-h"},
 		"doctor":     {"--help", "-h"},
-		"sync":       {"--source", "--workspace", "--channels", "--since", "--full", "--concurrency", "--help", "-h"},
+		"publish":    {"--repo", "--remote", "--branch", "--message", "--no-commit", "--push", "--help", "-h"},
+		"subscribe":  {"--repo", "--db", "--remote", "--branch", "--stale-after", "--no-auto-update", "--no-import", "--help", "-h"},
+		"update":     {"--repo", "--remote", "--branch", "--help", "-h"},
+		"sync":       {"--source", "--workspace", "--channels", "--since", "--full", "--latest-only", "--concurrency", "--help", "-h"},
 		"tail":       {"--workspace", "--repair-every", "--help", "-h"},
 		"watch":      {"--desktop-every", "--help", "-h"},
 		"search":     {"--workspace", "--help", "-h"},
@@ -91,7 +97,7 @@ _slacrawl()
     local i
     for ((i=1; i < ${#words[@]}; i++)); do
         case "${words[i]}" in
-            init|doctor|sync|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
+            init|doctor|publish|subscribe|update|sync|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
                 command="${words[i]}"
                 break
                 ;;
@@ -120,8 +126,17 @@ _slacrawl()
         doctor)
             COMPREPLY=( $(compgen -W "--help -h ${global_flags}" -- "${cur}") )
             ;;
+        publish)
+            COMPREPLY=( $(compgen -W "--repo --remote --branch --message --no-commit --push --help -h ${global_flags}" -- "${cur}") )
+            ;;
+        subscribe)
+            COMPREPLY=( $(compgen -W "--repo --db --remote --branch --stale-after --no-auto-update --no-import --help -h ${global_flags}" -- "${cur}") )
+            ;;
+        update)
+            COMPREPLY=( $(compgen -W "--repo --remote --branch --help -h ${global_flags}" -- "${cur}") )
+            ;;
         sync)
-            COMPREPLY=( $(compgen -W "--source --workspace --channels --since --full --concurrency --help -h ${global_flags}" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--source --workspace --channels --since --full --latest-only --concurrency --help -h ${global_flags}" -- "${cur}") )
             ;;
         tail)
             COMPREPLY=( $(compgen -W "--workspace --repair-every --help -h ${global_flags}" -- "${cur}") )
@@ -191,8 +206,17 @@ _slacrawl() {
         init)
           _arguments '--workspace[workspace id]:workspace id:' '--db[database path]:database path:_files'
           ;;
+        publish)
+          _arguments '--repo[git repo path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:' '--message[commit message]:message:' '--no-commit[skip git commit]' '--push[push to origin]'
+          ;;
+        subscribe)
+          _arguments '--repo[local clone path]:path:_files' '--db[database path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:' '--stale-after[auto-refresh age threshold]:duration:' '--no-auto-update[disable read-time auto refresh]' '--no-import[skip initial import]'
+          ;;
+        update)
+          _arguments '--repo[local clone path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:'
+          ;;
         sync)
-          _arguments '--source[sync source]:source:(api desktop all)' '--workspace[workspace id]:workspace id:' '--channels[channel ids]:channels:' '--since[start timestamp]:timestamp:' '--full[run full sync]' '--concurrency[worker count]:count:'
+          _arguments '--source[sync source]:source:(api desktop all)' '--workspace[workspace id]:workspace id:' '--channels[channel ids]:channels:' '--since[start timestamp]:timestamp:' '--full[run full sync]' '--latest-only[skip first-time historical backfills]' '--concurrency[worker count]:count:'
           ;;
         tail)
           _arguments '--workspace[workspace id]:workspace id:' '--repair-every[repair interval]:duration:'

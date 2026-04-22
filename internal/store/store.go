@@ -14,6 +14,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const schemaVersion = 1
+
 const schema = `
 pragma foreign_keys = on;
 pragma journal_mode = wal;
@@ -252,11 +254,33 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	currentVersion, err := readSchemaVersion(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if currentVersion > schemaVersion {
+		_ = db.Close()
+		return nil, fmt.Errorf("database schema version %d is newer than this slacrawl build supports (%d)", currentVersion, schemaVersion)
+	}
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+	if currentVersion != schemaVersion {
+		if err := writeSchemaVersion(db, schemaVersion); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
 	return &Store{db: db}, nil
+}
+
+func (s *Store) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
 }
 
 func (s *Store) Close() error {
@@ -687,6 +711,26 @@ limit ?
 	return out, rows.Err()
 }
 
+func (s *Store) RebuildSearchIndexes(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `delete from message_fts`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+insert into message_fts (message_key, content)
+select channel_id || '|' || ts, normalized_text
+from messages
+`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func MarshalRaw(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -767,4 +811,19 @@ func PrettyStatus(status Status) string {
 	}
 	return fmt.Sprintf("workspaces=%d channels=%d users=%d messages=%d last_sync=%s thread_state=%s",
 		status.Workspaces, status.Channels, status.Users, status.Messages, last, status.ThreadState)
+}
+
+func readSchemaVersion(db *sql.DB) (int, error) {
+	var version int
+	if err := db.QueryRow(`pragma user_version`).Scan(&version); err != nil {
+		return 0, fmt.Errorf("read sqlite schema version: %w", err)
+	}
+	return version, nil
+}
+
+func writeSchemaVersion(db *sql.DB, version int) error {
+	if _, err := db.Exec(fmt.Sprintf("pragma user_version = %d", version)); err != nil {
+		return fmt.Errorf("write sqlite schema version: %w", err)
+	}
+	return nil
 }
