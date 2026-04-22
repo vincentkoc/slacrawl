@@ -51,7 +51,6 @@ Data stays on your machine. You can run it in API mode, desktop mode, or a hybri
 
 ## Not Yet Included
 
-- Slack export ZIP import
 - DMs and MPIMs
 - attachment blob downloads
 - write-back actions
@@ -161,6 +160,7 @@ Choose the path that matches your setup:
 - `subscribe` configures a git-backed reader that can run without Slack credentials
 - `update` pulls and imports the latest git snapshot
 - `sync` performs a one-shot crawl from API, desktop, or both
+- `import` imports a Slack export ZIP or extracted export directory
 - `tail` listens for live events through Socket Mode, including one tail per configured workspace
 - `watch` refreshes desktop-local state on a schedule
 - `search` runs local FTS queries, optionally filtered by workspace
@@ -172,6 +172,13 @@ Choose the path that matches your setup:
 - `status` prints workspace and sync status
 - `digest` prints a per-channel activity summary for a time window
 - `completion` prints shell completion for `bash` or `zsh`
+
+## Importing a Slack Export
+
+```bash
+slacrawl import ./my-export.zip --workspace T01234567
+slacrawl import ./extracted-export/ --workspace T01234567 --dry-run
+```
 
 ## Output Modes
 

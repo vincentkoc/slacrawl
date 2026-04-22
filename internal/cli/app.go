@@ -25,6 +25,9 @@ import (
 type App struct {
 	Stdout io.Writer
 	Stderr io.Writer
+
+	configPath   string
+	outputFormat OutputFormat
 }
 
 type OutputFormat string
@@ -78,6 +81,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	a.configPath = *configPath
+	a.outputFormat = outputFormat
 	a.setColorEnabled(outputFormat, *noColor)
 
 	switch rest[0] {
@@ -99,6 +104,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runStatus(ctx, *configPath, outputFormat)
 	case "sync":
 		return a.runSync(ctx, *configPath, rest[1:], outputFormat)
+	case "import":
+		return a.runImport(ctx, rest[1:])
 	case "search":
 		return a.runSearch(ctx, *configPath, rest[1:], outputFormat)
 	case "messages":

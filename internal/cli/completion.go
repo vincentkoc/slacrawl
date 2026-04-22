@@ -16,6 +16,7 @@ var (
 		"subscribe",
 		"update",
 		"sync",
+		"import",
 		"tail",
 		"watch",
 		"search",
@@ -43,6 +44,7 @@ var (
 		"subscribe":  {"--repo", "--db", "--remote", "--branch", "--stale-after", "--no-auto-update", "--no-import", "--help", "-h"},
 		"update":     {"--repo", "--remote", "--branch", "--help", "-h"},
 		"sync":       {"--source", "--workspace", "--channels", "--since", "--full", "--latest-only", "--concurrency", "--help", "-h"},
+		"import":     {"--workspace", "--dry-run", "--force", "--format", "--help", "-h"},
 		"tail":       {"--workspace", "--repair-every", "--help", "-h"},
 		"watch":      {"--desktop-every", "--help", "-h"},
 		"search":     {"--workspace", "--help", "-h"},
@@ -99,7 +101,7 @@ _slacrawl()
     local i
     for ((i=1; i < ${#words[@]}; i++)); do
         case "${words[i]}" in
-            init|doctor|report|publish|subscribe|update|sync|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
+            init|doctor|report|publish|subscribe|update|sync|import|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
                 command="${words[i]}"
                 break
                 ;;
@@ -142,6 +144,9 @@ _slacrawl()
             ;;
         sync)
             COMPREPLY=( $(compgen -W "--source --workspace --channels --since --full --latest-only --concurrency --help -h ${global_flags}" -- "${cur}") )
+            ;;
+        import)
+            COMPREPLY=( $(compgen -W "--workspace --dry-run --force --format --help -h ${global_flags}" -- "${cur}") )
             ;;
         tail)
             COMPREPLY=( $(compgen -W "--workspace --repair-every --help -h ${global_flags}" -- "${cur}") )
@@ -225,6 +230,9 @@ _slacrawl() {
           ;;
         sync)
           _arguments '--source[sync source]:source:(api desktop all)' '--workspace[workspace id]:workspace id:' '--channels[channel ids]:channels:' '--since[start timestamp]:timestamp:' '--full[run full sync]' '--latest-only[skip first-time historical backfills]' '--concurrency[worker count]:count:'
+          ;;
+        import)
+          _arguments '--workspace[workspace id]:workspace id:' '--dry-run[walk and count without writing]' '--force[overwrite existing slack-export rows at the same rank]' '--format[output format]:format:(text json log)'
           ;;
         tail)
           _arguments '--workspace[workspace id]:workspace id:' '--repair-every[repair interval]:duration:'

@@ -29,7 +29,6 @@ V1 scope:
 
 Out of scope for V1:
 
-- Slack export ZIP import
 - DMs and MPIMs
 - attachment blob downloads by default
 - write-back actions
@@ -45,7 +44,7 @@ Out of scope for V1:
 - language: Go
 - schema: single-workspace default, multi-workspace-ready
 - search: FTS5 first, embeddings later
-- source precedence: user-token API, then bot-token API, then desktop-local cache
+- source precedence: user-token API, then bot-token API and slack-export imports, then desktop-local cache
 - files: metadata only in DB for V1
 - desktop-local source: macOS Slack Desktop container path only
 
@@ -122,6 +121,7 @@ Commands:
 - `subscribe`
 - `update`
 - `sync`
+- `import`
 - `tail`
 - `watch`
 - `search`
