@@ -141,6 +141,7 @@ Commands:
 - `status`
 - `report`
 - `digest`
+- `analytics`
 
 ### `sync`
 
@@ -212,6 +213,18 @@ Must include:
 - top posters per channel (respects `--top-n`)
 - top mention targets per channel (respects `--top-n`)
 - window totals: messages, threads, channels, active authors
+
+### `analytics`
+
+Purpose:
+
+- grouped analytics subcommands derived from local store data
+
+Subcommands in this phase:
+
+- `analytics digest [--since 7d] [--workspace <id>] [--channel <id-or-name>]`
+- `analytics quiet [--since 30d] [--workspace <id>]`
+- `analytics trends [--weeks 8] [--workspace <id>] [--channel <id-or-name>]`
 
 ### `tail`
 

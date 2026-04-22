@@ -12,6 +12,8 @@ var (
 		"init",
 		"doctor",
 		"report",
+		"digest",
+		"analytics",
 		"publish",
 		"subscribe",
 		"update",
@@ -40,6 +42,8 @@ var (
 		"init":       {"--workspace", "--db", "--help", "-h"},
 		"doctor":     {"--help", "-h"},
 		"report":     {"--help", "-h"},
+		"digest":     {"--since", "--workspace", "--channel", "--top-n", "--help", "-h"},
+		"analytics":  {"digest", "quiet", "trends", "--help", "-h"},
 		"publish":    {"--repo", "--remote", "--branch", "--message", "--no-commit", "--push", "--help", "-h"},
 		"subscribe":  {"--repo", "--db", "--remote", "--branch", "--stale-after", "--no-auto-update", "--no-import", "--help", "-h"},
 		"update":     {"--repo", "--remote", "--branch", "--help", "-h"},
@@ -101,7 +105,7 @@ _slacrawl()
     local i
     for ((i=1; i < ${#words[@]}; i++)); do
         case "${words[i]}" in
-            init|doctor|report|publish|subscribe|update|sync|import|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
+            init|doctor|report|digest|analytics|publish|subscribe|update|sync|import|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
                 command="${words[i]}"
                 break
                 ;;
@@ -125,6 +129,10 @@ _slacrawl()
 			COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") )
 			return
 			;;
+		analytics)
+			COMPREPLY=( $(compgen -W "digest quiet trends --help -h ${global_flags}" -- "${cur}") )
+			return
+			;;
     esac
 
     case "${command}" in
@@ -136,6 +144,34 @@ _slacrawl()
             ;;
         report)
             COMPREPLY=( $(compgen -W "--help -h ${global_flags}" -- "${cur}") )
+            ;;
+        digest)
+            COMPREPLY=( $(compgen -W "--since --workspace --channel --top-n --help -h ${global_flags}" -- "${cur}") )
+            ;;
+        analytics)
+            local analytics_subcommand=""
+            for ((i=2; i < ${#words[@]}; i++)); do
+                case "${words[i]}" in
+                    digest|quiet|trends)
+                        analytics_subcommand="${words[i]}"
+                        break
+                        ;;
+                esac
+            done
+            case "${analytics_subcommand}" in
+                digest)
+                    COMPREPLY=( $(compgen -W "--since --workspace --channel --top-n --help -h ${global_flags}" -- "${cur}") )
+                    ;;
+                quiet)
+                    COMPREPLY=( $(compgen -W "--since --workspace --format --json --help -h ${global_flags}" -- "${cur}") )
+                    ;;
+                trends)
+                    COMPREPLY=( $(compgen -W "--weeks --workspace --channel --format --json --help -h ${global_flags}" -- "${cur}") )
+                    ;;
+                *)
+                    COMPREPLY=( $(compgen -W "digest quiet trends --help -h ${global_flags}" -- "${cur}") )
+                    ;;
+            esac
             ;;
         publish)
             COMPREPLY=( $(compgen -W "--repo --remote --branch --message --no-commit --push --help -h ${global_flags}" -- "${cur}") )
@@ -222,6 +258,29 @@ _slacrawl() {
           ;;
         report)
           _arguments '--help[show help]'
+          ;;
+        digest)
+          _arguments '--since[lookback window]:duration:' '--workspace[workspace id]:workspace id:' '--channel[channel id or name]:channel:' '--top-n[top posters and mentions per channel]:count:'
+          ;;
+        analytics)
+          if (( CURRENT == 3 )); then
+            _values 'analytics subcommand' digest quiet trends
+          else
+            case $words[3] in
+              digest)
+                _arguments '--since[lookback window]:duration:' '--workspace[workspace id]:workspace id:' '--channel[channel id or name]:channel:' '--top-n[top posters and mentions per channel]:count:'
+                ;;
+              quiet)
+                _arguments '--since[lookback window]:duration:' '--workspace[workspace id]:workspace id:' '--format[output format]:format:(text json log)' '--json[json output]'
+                ;;
+              trends)
+                _arguments '--weeks[number of weeks]:count:' '--workspace[workspace id]:workspace id:' '--channel[channel id or name]:channel:' '--format[output format]:format:(text json log)' '--json[json output]'
+                ;;
+              *)
+                _values 'analytics subcommand' digest quiet trends
+                ;;
+            esac
+          fi
           ;;
         publish)
           _arguments '--repo[git repo path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:' '--message[commit message]:message:' '--no-commit[skip git commit]' '--push[push to origin]'

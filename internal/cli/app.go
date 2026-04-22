@@ -94,6 +94,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runReport(ctx, *configPath, outputFormat)
 	case "digest":
 		return a.runDigest(ctx, *configPath, rest[1:], outputFormat)
+	case "analytics":
+		return a.runAnalytics(ctx, *configPath, rest[1:], outputFormat)
 	case "publish":
 		return a.runPublish(ctx, *configPath, rest[1:], outputFormat)
 	case "subscribe":
