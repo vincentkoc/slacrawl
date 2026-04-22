@@ -25,6 +25,7 @@ type Config struct {
 	Slack       SlackConfig  `toml:"slack"`
 	Sync        SyncConfig   `toml:"sync"`
 	Search      SearchConfig `toml:"search"`
+	Share       ShareConfig  `toml:"share"`
 }
 
 type SlackConfig struct {
@@ -64,6 +65,14 @@ type SearchConfig struct {
 	DefaultMode string `toml:"default_mode"`
 }
 
+type ShareConfig struct {
+	Remote     string `toml:"remote"`
+	RepoPath   string `toml:"repo_path"`
+	Branch     string `toml:"branch"`
+	AutoUpdate bool   `toml:"auto_update"`
+	StaleAfter string `toml:"stale_after"`
+}
+
 type Tokens struct {
 	Bot  string
 	App  string
@@ -94,6 +103,12 @@ func Default() Config {
 		},
 		Search: SearchConfig{
 			DefaultMode: "fts",
+		},
+		Share: ShareConfig{
+			RepoPath:   filepath.ToSlash(filepath.Join(base, "share")),
+			Branch:     "main",
+			AutoUpdate: true,
+			StaleAfter: "15m",
 		},
 	}
 }
@@ -146,6 +161,15 @@ func (c *Config) Normalize() error {
 	if c.Search.DefaultMode == "" {
 		c.Search.DefaultMode = "fts"
 	}
+	if c.Share.RepoPath == "" {
+		c.Share.RepoPath = Default().Share.RepoPath
+	}
+	if c.Share.Branch == "" {
+		c.Share.Branch = "main"
+	}
+	if c.Share.StaleAfter == "" {
+		c.Share.StaleAfter = "15m"
+	}
 	if c.Sync.DesktopRefreshEvery == "" {
 		c.Sync.DesktopRefreshEvery = "5m"
 	}
@@ -157,7 +181,7 @@ func (c *Config) Normalize() error {
 		c.Slack.Desktop.Path = detected
 	}
 
-	paths := []*string{&c.DBPath, &c.CacheDir, &c.LogDir, &c.Slack.Desktop.Path}
+	paths := []*string{&c.DBPath, &c.CacheDir, &c.LogDir, &c.Slack.Desktop.Path, &c.Share.RepoPath}
 	for _, candidate := range paths {
 		expanded, err := ExpandPath(*candidate)
 		if err != nil {
@@ -242,6 +266,32 @@ func (c Config) WorkspaceIDs() []string {
 		ids = append(ids, workspace.ID)
 	}
 	return ids
+}
+
+func (c Config) ShareEnabled() bool {
+	return strings.TrimSpace(c.Share.Remote) != ""
+}
+
+func EnsureRuntimeDirs(c Config) error {
+	paths := []string{
+		filepath.Dir(c.DBPath),
+		c.CacheDir,
+		c.LogDir,
+		filepath.Dir(c.Share.RepoPath),
+	}
+	for _, raw := range paths {
+		path, err := ExpandPath(raw)
+		if err != nil {
+			return err
+		}
+		if path == "" {
+			continue
+		}
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func resolveTokens(cfg SlackConfig) Tokens {

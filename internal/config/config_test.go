@@ -84,12 +84,15 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 
 	cfg := Default()
 	cfg.WorkspaceID = "T123"
+	cfg.Share.Remote = "https://example.com/private/slacrawl.git"
 	require.NoError(t, cfg.Save(path))
 
 	loaded, err := Load(path)
 	require.NoError(t, err)
 	require.Equal(t, "T123", loaded.WorkspaceID)
 	require.True(t, filepath.IsAbs(loaded.DBPath))
+	require.True(t, filepath.IsAbs(loaded.Share.RepoPath))
+	require.Equal(t, "https://example.com/private/slacrawl.git", loaded.Share.Remote)
 }
 
 func TestDefaultConfigPath(t *testing.T) {
@@ -114,6 +117,21 @@ func TestNormalizeSetsDefaultWorkspaceFromWorkspaceList(t *testing.T) {
 	require.NoError(t, cfg.Normalize())
 	require.Equal(t, "T456", cfg.WorkspaceID)
 	require.Equal(t, []string{"T123", "T456"}, cfg.WorkspaceIDs())
+}
+
+func TestEnsureRuntimeDirsCreatesShareParent(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Default()
+	cfg.DBPath = filepath.Join(dir, "state", "slacrawl.db")
+	cfg.CacheDir = filepath.Join(dir, "cache")
+	cfg.LogDir = filepath.Join(dir, "logs")
+	cfg.Share.RepoPath = filepath.Join(dir, "repos", "share")
+	require.NoError(t, EnsureRuntimeDirs(cfg))
+
+	require.DirExists(t, filepath.Dir(cfg.DBPath))
+	require.DirExists(t, cfg.CacheDir)
+	require.DirExists(t, cfg.LogDir)
+	require.DirExists(t, filepath.Dir(cfg.Share.RepoPath))
 }
 
 func mustHome(t *testing.T) string {

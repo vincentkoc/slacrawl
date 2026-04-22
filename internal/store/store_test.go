@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -142,4 +143,28 @@ func TestWorkspaceFiltersApplyToReadQueries(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, channels, 1)
 	require.Equal(t, "T1", channels[0].WorkspaceID)
+}
+
+func TestOpenStampsSchemaVersion(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	var version int
+	require.NoError(t, s.DB().QueryRow("pragma user_version").Scan(&version))
+	require.Equal(t, schemaVersion, version)
+}
+
+func TestOpenFailsForNewerSchemaVersion(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec("pragma user_version = 99")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = Open(dbPath)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "newer than this slacrawl build supports")
 }
