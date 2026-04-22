@@ -266,8 +266,9 @@ Behavior:
 - `subscribe` writes a git-reader config, disables Slack API and desktop sources for that config, clones the repo, and imports the snapshot
 - pass `--db` to `subscribe` when you want the reader archive to land in a non-default SQLite path
 - `update` pulls and re-imports only when the manifest changes
-- `status`, `search`, `messages`, `mentions`, `sql`, `users`, and `channels` auto-refresh stale git snapshots before reading when `auto_update = true`
+- `status`, `search`, `messages`, `mentions`, `sql`, `users`, `channels`, and `report` auto-refresh stale git snapshots before reading when `auto_update = true`
 - `sync --source api` and `sync --source all` warm from the git snapshot before hitting Slack when a share remote is configured
+- `status` and `doctor` surface the current git-share repo, last import time, and whether the local snapshot is stale
 
 Typical publish / subscribe flow:
 
@@ -306,6 +307,7 @@ Desktop config notes:
 go run ./cmd/slacrawl init
 go run ./cmd/slacrawl sync --source api
 go run ./cmd/slacrawl status
+go run ./cmd/slacrawl report
 go run ./cmd/slacrawl channels
 go run ./cmd/slacrawl messages --channel C12345678 --limit 20
 go run ./cmd/slacrawl mentions --limit 20
@@ -317,6 +319,7 @@ go run ./cmd/slacrawl sql 'select channel_id, count(*) as messages from messages
 - Full historical thread reply coverage in public and private channels depends on providing a user token.
 - `tail` requires an app token because it uses Socket Mode.
 - SQLite FTS5 is the built-in full-text index that powers fast local text search without an external search server.
+- Indexed text is sanitized before it reaches FTS, so malformed UTF-8, zero-width junk, and odd whitespace do not poison search.
 - Desktop-local support is broader than simple discovery, but still not a full write-back or export-import path.
 
 ## Development

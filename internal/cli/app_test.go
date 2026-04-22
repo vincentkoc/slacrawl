@@ -144,6 +144,8 @@ func TestDoctorIncludesOperationalSyncState(t *testing.T) {
 	state := tail[0].(map[string]any)
 	require.Equal(t, "connection", state["entity_type"])
 	require.Equal(t, "T123", state["entity_id"])
+	shareState := report["share"].(map[string]any)
+	require.Equal(t, false, shareState["enabled"])
 }
 
 func TestWorkspaceFilteredReadCommands(t *testing.T) {
@@ -253,8 +255,33 @@ func TestStatusHumanOutputIsStructured(t *testing.T) {
 	require.Contains(t, out, "STATUS")
 	require.Contains(t, out, "workspaces")
 	require.Contains(t, out, "messages")
+	require.Contains(t, out, "Git share")
 	require.True(t, strings.Contains(out, "never") || strings.Contains(out, "last sync"))
+	require.NotContains(t, out, "map[]")
 	require.NotContains(t, out, "\x1b[")
+}
+
+func TestDoctorHumanOutputSkipsEmptyShareTimes(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.toml")
+	dbPath := filepath.Join(tmp, "slacrawl.db")
+
+	var stdout bytes.Buffer
+	app := &App{
+		Stdout: &stdout,
+		Stderr: &stdout,
+	}
+
+	ctx := context.Background()
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "init", "--db", dbPath}))
+
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "doctor"}))
+
+	out := stdout.String()
+	require.Contains(t, out, "Git share")
+	require.Contains(t, out, "not configured")
+	require.NotContains(t, out, "map[]")
 }
 
 func TestStatusLogOutputIsLineOriented(t *testing.T) {
@@ -328,6 +355,7 @@ func TestCompletionBashOutput(t *testing.T) {
 	out := stdout.String()
 	require.Contains(t, out, "complete -F _slacrawl slacrawl")
 	require.Contains(t, out, "completion")
+	require.Contains(t, out, "report")
 	require.Contains(t, out, "--format")
 }
 
@@ -343,7 +371,45 @@ func TestCompletionZshOutput(t *testing.T) {
 	out := stdout.String()
 	require.Contains(t, out, "#compdef slacrawl")
 	require.Contains(t, out, "_values 'shell' bash zsh")
+	require.Contains(t, out, "report")
 	require.Contains(t, out, "--no-color")
+}
+
+func TestReportIncludesArchiveAndShareState(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.toml")
+	dbPath := filepath.Join(tmp, "slacrawl.db")
+
+	cfg := config.Default()
+	cfg.DBPath = dbPath
+	cfg.Share.Remote = "https://example.com/private/archive.git"
+	cfg.Share.RepoPath = filepath.Join(tmp, "share")
+	cfg.Share.AutoUpdate = false
+	cfg.Slack.Bot.Enabled = false
+	cfg.Slack.App.Enabled = false
+	cfg.Slack.User.Enabled = false
+	cfg.Slack.Desktop.Enabled = false
+	require.NoError(t, cfg.Save(configPath))
+
+	seedArchiveStore(t, dbPath, "archive report seed")
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, st.SetSyncState(context.Background(), "share", "import", "last_import_at", mustTime(t, "2026-03-08T19:20:43Z").Format(time.RFC3339Nano)))
+	require.NoError(t, st.SetSyncState(context.Background(), "share", "import", "last_manifest_generated_at", mustTime(t, "2026-03-08T19:10:43Z").Format(time.RFC3339Nano)))
+	require.NoError(t, st.Close())
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "--json", "report"}))
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &body))
+	activity := body["activity"].(map[string]any)
+	require.Equal(t, float64(1), activity["total_workspaces"])
+	require.Equal(t, float64(1), activity["total_messages"])
+	shareState := body["share"].(map[string]any)
+	require.Equal(t, true, shareState["enabled"])
+	require.Equal(t, "https://example.com/private/archive.git", shareState["remote"])
 }
 
 func TestPublishSubscribeAndSearchGitArchive(t *testing.T) {

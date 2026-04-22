@@ -106,12 +106,20 @@ Behavior:
 - `subscribe` writes a git-reader config, disables Slack API and desktop sources for that config, clones the repo, and imports the snapshot
 - pass `--db` to `subscribe` when you want the reader archive to use a non-default SQLite file
 - `update` pulls and imports only when the manifest changed
-- read commands auto-refresh stale git-backed snapshots before querying when `auto_update = true`
+- `status`, `search`, `messages`, `mentions`, `sql`, `users`, `channels`, and `report` auto-refresh stale git-backed snapshots before querying when `auto_update = true`
 - `stale_after` controls how old the last successful import can be before the next read pulls/imports again
+- `status` and `doctor` show the configured share repo plus last import / manifest freshness details
 
 ## Token Sources
 
 Each Slack token source is controlled independently.
+
+Text normalization notes:
+
+- malformed UTF-8 is repaired before indexing
+- compatibility forms are normalized with NFKC
+- zero-width and non-printable control noise is stripped from indexed text
+- weird spacing is collapsed so FTS and mentions stay queryable even when Slack/Desktop payloads are messy
 
 ### Bot token
 

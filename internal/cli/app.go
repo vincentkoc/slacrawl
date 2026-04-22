@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/vincentkoc/slacrawl/internal/config"
+	"github.com/vincentkoc/slacrawl/internal/report"
 	"github.com/vincentkoc/slacrawl/internal/share"
 	"github.com/vincentkoc/slacrawl/internal/slackapi"
 	"github.com/vincentkoc/slacrawl/internal/slackdesktop"
@@ -83,6 +84,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runInit(*configPath, rest[1:], outputFormat)
 	case "doctor":
 		return a.runDoctor(ctx, *configPath, outputFormat)
+	case "report":
+		return a.runReport(ctx, *configPath, outputFormat)
 	case "publish":
 		return a.runPublish(ctx, *configPath, rest[1:], outputFormat)
 	case "subscribe":
@@ -227,6 +230,10 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 	if err != nil {
 		return err
 	}
+	shareState, err := a.buildShareState(ctx, cfg, st)
+	if err != nil {
+		return err
+	}
 	channelSkips, err := st.ListSyncState(ctx, "api-bot", "channel_skip", 20)
 	if err != nil {
 		return err
@@ -253,6 +260,7 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 		"slack_api":         diag,
 		"workspace_api":     workspaceAPI,
 		"desktop_source":    desktop,
+		"share":             shareState,
 		"api_channel_skips": channelSkips,
 		"tail_state":        tailState,
 		"status":            status,
@@ -275,7 +283,11 @@ func (a *App) runStatus(ctx context.Context, configPath string, format OutputFor
 	if err != nil {
 		return err
 	}
-	return a.writeOutput("Status", status, format, true)
+	shareState, err := a.buildShareState(ctx, cfg, st)
+	if err != nil {
+		return err
+	}
+	return a.writeOutput("Status", statusResponse{Status: status, Share: shareState}, format, true)
 }
 
 func (a *App) runSync(ctx context.Context, configPath string, args []string, format OutputFormat) error {
@@ -579,6 +591,30 @@ func (a *App) runWatch(ctx context.Context, configPath string, args []string, fo
 			}
 		}
 	}
+}
+
+func (a *App) runReport(ctx context.Context, configPath string, format OutputFormat) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	st, err := a.openReadableStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	activity, err := report.Build(ctx, st, report.Options{})
+	if err != nil {
+		return err
+	}
+	shareState, err := a.buildShareState(ctx, cfg, st)
+	if err != nil {
+		return err
+	}
+	return a.writeOutput("Report", map[string]any{
+		"activity": activity,
+		"share":    shareState,
+	}, format, true)
 }
 
 func (a *App) writeJSON(value any) error {
@@ -975,4 +1011,53 @@ func shareOptions(repoPath, remote, branch string) (share.Options, error) {
 		Remote:   strings.TrimSpace(remote),
 		Branch:   branch,
 	}, nil
+}
+
+type statusResponse struct {
+	store.Status
+	Share shareResponse `json:"share"`
+}
+
+type shareResponse struct {
+	Enabled                 bool       `json:"enabled"`
+	AutoUpdate              bool       `json:"auto_update"`
+	Remote                  string     `json:"remote,omitempty"`
+	RepoPath                string     `json:"repo_path,omitempty"`
+	Branch                  string     `json:"branch,omitempty"`
+	StaleAfter              string     `json:"stale_after,omitempty"`
+	LastImportAt            *time.Time `json:"last_import_at,omitempty"`
+	LastManifestGeneratedAt *time.Time `json:"last_manifest_generated_at,omitempty"`
+	NeedsImport             bool       `json:"needs_import"`
+}
+
+func (a *App) buildShareState(ctx context.Context, cfg config.Config, st *store.Store) (shareResponse, error) {
+	state := shareResponse{
+		Enabled:    cfg.ShareEnabled(),
+		AutoUpdate: cfg.Share.AutoUpdate,
+		Remote:     cfg.Share.Remote,
+		RepoPath:   cfg.Share.RepoPath,
+		Branch:     cfg.Share.Branch,
+		StaleAfter: cfg.Share.StaleAfter,
+	}
+	syncState, err := share.ReadSyncState(ctx, st)
+	if err != nil {
+		return shareResponse{}, err
+	}
+	if !syncState.LastImportAt.IsZero() {
+		lastImport := syncState.LastImportAt
+		state.LastImportAt = &lastImport
+	}
+	if !syncState.LastManifestGeneratedAt.IsZero() {
+		lastManifest := syncState.LastManifestGeneratedAt
+		state.LastManifestGeneratedAt = &lastManifest
+	}
+	if !cfg.ShareEnabled() {
+		return state, nil
+	}
+	staleAfter, err := time.ParseDuration(cfg.Share.StaleAfter)
+	if err != nil {
+		return shareResponse{}, fmt.Errorf("invalid share.stale_after: %w", err)
+	}
+	state.NeedsImport = share.NeedsImport(ctx, st, staleAfter)
+	return state, nil
 }

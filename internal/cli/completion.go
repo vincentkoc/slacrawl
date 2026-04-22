@@ -11,6 +11,7 @@ var (
 	commandNames = []string{
 		"init",
 		"doctor",
+		"report",
 		"publish",
 		"subscribe",
 		"update",
@@ -37,6 +38,7 @@ var (
 	commandFlags = map[string][]string{
 		"init":       {"--workspace", "--db", "--help", "-h"},
 		"doctor":     {"--help", "-h"},
+		"report":     {"--help", "-h"},
 		"publish":    {"--repo", "--remote", "--branch", "--message", "--no-commit", "--push", "--help", "-h"},
 		"subscribe":  {"--repo", "--db", "--remote", "--branch", "--stale-after", "--no-auto-update", "--no-import", "--help", "-h"},
 		"update":     {"--repo", "--remote", "--branch", "--help", "-h"},
@@ -97,7 +99,7 @@ _slacrawl()
     local i
     for ((i=1; i < ${#words[@]}; i++)); do
         case "${words[i]}" in
-            init|doctor|publish|subscribe|update|sync|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
+            init|doctor|report|publish|subscribe|update|sync|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
                 command="${words[i]}"
                 break
                 ;;
@@ -124,6 +126,9 @@ _slacrawl()
             COMPREPLY=( $(compgen -W "--workspace --db --help -h ${global_flags}" -- "${cur}") )
             ;;
         doctor)
+            COMPREPLY=( $(compgen -W "--help -h ${global_flags}" -- "${cur}") )
+            ;;
+        report)
             COMPREPLY=( $(compgen -W "--help -h ${global_flags}" -- "${cur}") )
             ;;
         publish)
@@ -205,6 +210,9 @@ _slacrawl() {
       case $words[2] in
         init)
           _arguments '--workspace[workspace id]:workspace id:' '--db[database path]:database path:_files'
+          ;;
+        report)
+          _arguments '--help[show help]'
           ;;
         publish)
           _arguments '--repo[git repo path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:' '--message[commit message]:message:' '--no-commit[skip git commit]' '--push[push to origin]'

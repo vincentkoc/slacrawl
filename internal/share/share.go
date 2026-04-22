@@ -66,6 +66,11 @@ type TableManifest struct {
 	Rows    int      `json:"rows"`
 }
 
+type SyncState struct {
+	LastImportAt            time.Time `json:"last_import_at"`
+	LastManifestGeneratedAt time.Time `json:"last_manifest_generated_at"`
+}
+
 func EnsureRepo(ctx context.Context, opts Options) error {
 	if strings.TrimSpace(opts.RepoPath) == "" {
 		return errors.New("share repo path is empty")
@@ -291,6 +296,19 @@ func NeedsImport(ctx context.Context, s *store.Store, staleAfter time.Duration) 
 		return true
 	}
 	return time.Since(t) >= staleAfter
+}
+
+func ReadSyncState(ctx context.Context, s *store.Store) (SyncState, error) {
+	var state SyncState
+	lastImport, err := s.GetSyncState(ctx, importSyncSource, importSyncEntityType, lastImportEntityID)
+	if err == nil {
+		state.LastImportAt = parseSyncTime(lastImport)
+	}
+	lastManifest, err := s.GetSyncState(ctx, importSyncSource, importSyncEntityType, lastManifestEntityID)
+	if err == nil {
+		state.LastManifestGeneratedAt = parseSyncTime(lastManifest)
+	}
+	return state, nil
 }
 
 func ReadManifest(repoPath string) (Manifest, error) {
@@ -578,4 +596,16 @@ func isNonFastForwardPush(out string) bool {
 	return strings.Contains(lower, "non-fast-forward") ||
 		strings.Contains(lower, "fetch first") ||
 		strings.Contains(lower, "failed to push some refs")
+}
+
+func parseSyncTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed.UTC()
 }

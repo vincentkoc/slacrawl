@@ -75,6 +75,7 @@ func (a *App) printHelp() {
 	b.WriteByte('\n')
 	b.WriteString("  init       Create a starter config.\n")
 	b.WriteString("  doctor     Check config, DB, tokens, and desktop coverage.\n")
+	b.WriteString("  report     Show archive activity and share freshness.\n")
 	b.WriteString("  publish    Export a git-backed archive snapshot.\n")
 	b.WriteString("  subscribe  Configure a git-backed archive reader.\n")
 	b.WriteString("  update     Pull and import the latest git snapshot.\n")
@@ -93,6 +94,7 @@ func (a *App) printHelp() {
 	b.WriteByte('\n')
 	b.WriteString("  slacrawl init\n")
 	b.WriteString("  slacrawl doctor\n")
+	b.WriteString("  slacrawl report\n")
 	b.WriteString("  slacrawl subscribe --db ~/.slacrawl/slacrawl.db https://example.com/private/slacrawl-archive.git\n")
 	b.WriteString("  slacrawl sync --source api --latest-only\n")
 	b.WriteString("  slacrawl search incident\n")
@@ -147,6 +149,10 @@ func renderSpecialBlock(w *strings.Builder, title string, value any) bool {
 	switch title {
 	case "Doctor":
 		return renderDoctorBlock(w, value)
+	case "Status":
+		return renderStatusBlock(w, value)
+	case "Report":
+		return renderReportBlock(w, value)
 	case "Sync", "Watch":
 		return renderSyncBlock(w, title, value)
 	case "Search":
@@ -455,6 +461,9 @@ func normalizeValue(value any) any {
 		}
 		rv = rv.Elem()
 	}
+	if scalar := normalizeScalar(rv.Interface()); scalar != nil {
+		return scalar
+	}
 
 	switch rv.Kind() {
 	case reflect.Struct:
@@ -464,6 +473,15 @@ func normalizeValue(value any) any {
 			field := rt.Field(i)
 			if !field.IsExported() {
 				continue
+			}
+			if field.Anonymous {
+				flattened := normalizeValue(rv.Field(i).Interface())
+				if child, ok := flattened.(map[string]any); ok {
+					for key, value := range child {
+						out[key] = value
+					}
+					continue
+				}
 			}
 			key := field.Tag.Get("json")
 			if key == "" {
@@ -617,6 +635,9 @@ func renderDoctorBlock(w *strings.Builder, value any) bool {
 		w.WriteString(shortValue(status["thread_state"]))
 		w.WriteByte('\n')
 	}
+	if shareState, ok := report["share"].(map[string]any); ok {
+		renderShareBlock(w, shareState, true)
+	}
 
 	if skips, ok := report["api_channel_skips"].([]any); ok && len(skips) > 0 {
 		w.WriteByte('\n')
@@ -652,6 +673,35 @@ func renderDoctorBlock(w *strings.Builder, value any) bool {
 			w.WriteString(shortValue(row["value"]))
 			w.WriteByte('\n')
 		}
+	}
+
+	return true
+}
+
+func renderStatusBlock(w *strings.Builder, value any) bool {
+	report, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+
+	writeTitle(w, "STATUS")
+	w.WriteString(colorize(ansiGreen, "● Archive"))
+	w.WriteByte('\n')
+	writeMetricRow(w, []metric{
+		{"workspaces", shortValue(report["workspaces"]), ansiGreen},
+		{"channels", shortValue(report["channels"]), ansiGreen},
+		{"users", shortValue(report["users"]), ansiGreen},
+		{"messages", shortValue(report["messages"]), ansiGreen},
+	})
+	w.WriteString("  last sync    ")
+	w.WriteString(shortValue(report["last_sync_at"]))
+	w.WriteByte('\n')
+	w.WriteString("  thread state ")
+	w.WriteString(shortValue(report["thread_state"]))
+	w.WriteByte('\n')
+
+	if shareState, ok := report["share"].(map[string]any); ok {
+		renderShareBlock(w, shareState, true)
 	}
 
 	return true
@@ -705,6 +755,58 @@ func renderSyncBlock(w *strings.Builder, title string, value any) bool {
 				})
 			}
 		}
+	}
+	return true
+}
+
+func renderReportBlock(w *strings.Builder, value any) bool {
+	report, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	writeTitle(w, "REPORT")
+	if activity, ok := report["activity"].(map[string]any); ok {
+		w.WriteString(colorize(ansiGreen, "● Archive"))
+		w.WriteByte('\n')
+		writeMetricRow(w, []metric{
+			{"workspaces", shortValue(activity["total_workspaces"]), ansiGreen},
+			{"channels", shortValue(activity["total_channels"]), ansiGreen},
+			{"users", shortValue(activity["total_users"]), ansiGreen},
+			{"messages", shortValue(activity["total_messages"]), ansiGreen},
+		})
+		writeMetricRow(w, []metric{
+			{"drafts", shortValue(activity["draft_messages"]), ansiYellow},
+			{"edited", shortValue(activity["edited_messages"]), ansiYellow},
+			{"deleted", shortValue(activity["deleted_messages"]), ansiYellow},
+		})
+		if latest := shortValue(activity["latest_message_at"]); latest != "-" {
+			w.WriteString("  latest msg   ")
+			w.WriteString(latest)
+			w.WriteByte('\n')
+		}
+		if windows, ok := activity["windows"].([]any); ok && len(windows) > 0 {
+			w.WriteByte('\n')
+			w.WriteString(colorize(ansiCyan, "Windows"))
+			w.WriteByte('\n')
+			for _, item := range windows {
+				window, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				w.WriteString("  • ")
+				w.WriteString(shortValue(window["label"]))
+				w.WriteString("  messages=")
+				w.WriteString(shortValue(window["messages"]))
+				w.WriteString(" authors=")
+				w.WriteString(shortValue(window["active_authors"]))
+				w.WriteString(" channels=")
+				w.WriteString(shortValue(window["active_channels"]))
+				w.WriteByte('\n')
+			}
+		}
+	}
+	if shareState, ok := report["share"].(map[string]any); ok {
+		renderShareBlock(w, shareState, false)
 	}
 	return true
 }
@@ -808,6 +910,46 @@ func writeMetricRow(w *strings.Builder, metrics []metric) {
 		w.WriteString(colorize(ansiDim, item.label+"="))
 		w.WriteString(colorize(item.color, item.value))
 	}
+	w.WriteByte('\n')
+}
+
+func renderShareBlock(w *strings.Builder, shareState map[string]any, includeManifest bool) {
+	w.WriteByte('\n')
+	w.WriteString(colorize(ansiCyan, "Git share"))
+	w.WriteByte('\n')
+
+	enabled := truthy(shareState["enabled"])
+	detail := shortValue(shareState["remote"])
+	if detail == "-" {
+		detail = ternary(enabled, shortValue(shareState["repo_path"]), "not configured")
+	}
+	writeCheck(w, "enabled", enabled, detail)
+
+	if !enabled {
+		return
+	}
+
+	autoUpdate := truthy(shareState["auto_update"])
+	staleAfter := shortValue(shareState["stale_after"])
+	if staleAfter == "-" {
+		staleAfter = ternary(autoUpdate, "enabled", "disabled")
+	}
+	writeCheck(w, "auto update", autoUpdate, staleAfter)
+
+	if imported := shortValue(shareState["last_import_at"]); imported != "-" {
+		w.WriteString("  last import  ")
+		w.WriteString(imported)
+		w.WriteByte('\n')
+	}
+	if includeManifest {
+		if manifest := shortValue(shareState["last_manifest_generated_at"]); manifest != "-" {
+			w.WriteString("  manifest     ")
+			w.WriteString(manifest)
+			w.WriteByte('\n')
+		}
+	}
+	w.WriteString("  refresh due  ")
+	w.WriteString(ternary(truthy(shareState["needs_import"]), "yes", "no"))
 	w.WriteByte('\n')
 }
 

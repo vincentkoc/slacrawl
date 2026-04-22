@@ -131,6 +131,7 @@ Commands:
 - `users`
 - `channels`
 - `status`
+- `report`
 
 ### `sync`
 
@@ -160,6 +161,28 @@ Must check:
 - whether thread coverage can be full or only partial
 - if a configured user token actually auths successfully
 - recent API channel skips and tail connection/repair state when present
+- configured git-share repo plus last import / stale state when share mode is enabled
+
+### `status`
+
+Must include:
+
+- workspace, channel, user, message, and mention totals
+- sync metadata such as first / last timestamps
+- configured git-share repo plus last import / stale state when share mode is enabled
+
+### `report`
+
+Purpose:
+
+- summarize archive activity without writing SQL
+
+Must include:
+
+- total messages plus draft / edited / deleted counts
+- bounded windows for recent message activity
+- top channels, authors, and busiest days
+- git-share freshness state when share mode is enabled
 
 ### `tail`
 
@@ -214,6 +237,7 @@ Share config:
 - `[share].branch` defaults to `main`
 - `[share].auto_update` controls whether read commands import stale git snapshots before querying
 - `[share].stale_after` defines how old the last successful import can be before auto-refresh runs
+- share sync state should record both the last successful import time and the last imported manifest generation time
 
 ## Sync Algorithm
 
@@ -234,6 +258,10 @@ Share config:
 9. attempt public-channel join and retry once on `not_in_channel`
 10. backfill thread replies only when a user token is configured and successfully auths
 11. normalize messages
+   - repair malformed UTF-8 before indexing
+   - normalize indexed text with NFKC
+   - strip zero-width and non-printable control noise
+   - collapse odd whitespace for stable FTS / mention extraction
 12. upsert canonical rows
 13. update FTS rows and mentions
 14. write checkpoints, channel skips, and join attempts
