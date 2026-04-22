@@ -367,7 +367,7 @@ func TestPublishSubscribeAndSearchGitArchive(t *testing.T) {
 
 	readerCfgPath := filepath.Join(dir, "reader.toml")
 	stdout.Reset()
-	require.NoError(t, app.Run(ctx, []string{"--config", readerCfgPath, "--json", "subscribe", "--repo", filepath.Join(dir, "reader-share"), remoteRepo}))
+	require.NoError(t, app.Run(ctx, []string{"--config", readerCfgPath, "--json", "subscribe", "--repo", filepath.Join(dir, "reader-share"), "--db", filepath.Join(dir, "reader.db"), remoteRepo}))
 	var subscribe map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &subscribe))
 	require.Equal(t, true, subscribe["imported"])

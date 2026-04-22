@@ -264,6 +264,7 @@ Behavior:
 
 - `publish` writes gzipped JSONL shards plus `manifest.json` into `repo_path`
 - `subscribe` writes a git-reader config, disables Slack API and desktop sources for that config, clones the repo, and imports the snapshot
+- pass `--db` to `subscribe` when you want the reader archive to land in a non-default SQLite path
 - `update` pulls and re-imports only when the manifest changes
 - `status`, `search`, `messages`, `mentions`, `sql`, `users`, and `channels` auto-refresh stale git snapshots before reading when `auto_update = true`
 - `sync --source api` and `sync --source all` warm from the git snapshot before hitting Slack when a share remote is configured
@@ -276,7 +277,7 @@ go run ./cmd/slacrawl sync --source api --latest-only
 go run ./cmd/slacrawl publish --remote /path/to/private/slacrawl-archive.git --push
 
 # subscriber
-go run ./cmd/slacrawl subscribe --repo ~/.slacrawl/share /path/to/private/slacrawl-archive.git
+go run ./cmd/slacrawl subscribe --repo ~/.slacrawl/share --db ~/.slacrawl/slacrawl.db /path/to/private/slacrawl-archive.git
 go run ./cmd/slacrawl search incident
 ```
 

@@ -104,6 +104,7 @@ Behavior:
 
 - `publish` exports gzipped JSONL table shards plus `manifest.json` into `repo_path`
 - `subscribe` writes a git-reader config, disables Slack API and desktop sources for that config, clones the repo, and imports the snapshot
+- pass `--db` to `subscribe` when you want the reader archive to use a non-default SQLite file
 - `update` pulls and imports only when the manifest changed
 - read commands auto-refresh stale git-backed snapshots before querying when `auto_update = true`
 - `stale_after` controls how old the last successful import can be before the next read pulls/imports again

@@ -810,6 +810,7 @@ func (a *App) runSubscribe(ctx context.Context, configPath string, args []string
 	fs := flag.NewFlagSet("subscribe", flag.ContinueOnError)
 	fs.SetOutput(a.Stderr)
 	repoPath := fs.String("repo", cfg.Share.RepoPath, "local clone path")
+	dbPath := fs.String("db", cfg.DBPath, "database path")
 	remote := fs.String("remote", cfg.Share.Remote, "git remote")
 	branch := fs.String("branch", cfg.Share.Branch, "git branch")
 	staleAfter := fs.String("stale-after", cfg.Share.StaleAfter, "auto-refresh age threshold")
@@ -830,6 +831,7 @@ func (a *App) runSubscribe(ctx context.Context, configPath string, args []string
 
 	cfg.Share.Remote = strings.TrimSpace(*remote)
 	cfg.Share.RepoPath = *repoPath
+	cfg.DBPath = *dbPath
 	cfg.Share.Branch = *branch
 	cfg.Share.AutoUpdate = !*noAutoUpdate
 	cfg.Share.StaleAfter = *staleAfter

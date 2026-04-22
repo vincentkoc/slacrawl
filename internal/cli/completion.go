@@ -38,7 +38,7 @@ var (
 		"init":       {"--workspace", "--db", "--help", "-h"},
 		"doctor":     {"--help", "-h"},
 		"publish":    {"--repo", "--remote", "--branch", "--message", "--no-commit", "--push", "--help", "-h"},
-		"subscribe":  {"--repo", "--remote", "--branch", "--stale-after", "--no-auto-update", "--no-import", "--help", "-h"},
+		"subscribe":  {"--repo", "--db", "--remote", "--branch", "--stale-after", "--no-auto-update", "--no-import", "--help", "-h"},
 		"update":     {"--repo", "--remote", "--branch", "--help", "-h"},
 		"sync":       {"--source", "--workspace", "--channels", "--since", "--full", "--latest-only", "--concurrency", "--help", "-h"},
 		"tail":       {"--workspace", "--repair-every", "--help", "-h"},
@@ -130,7 +130,7 @@ _slacrawl()
             COMPREPLY=( $(compgen -W "--repo --remote --branch --message --no-commit --push --help -h ${global_flags}" -- "${cur}") )
             ;;
         subscribe)
-            COMPREPLY=( $(compgen -W "--repo --remote --branch --stale-after --no-auto-update --no-import --help -h ${global_flags}" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--repo --db --remote --branch --stale-after --no-auto-update --no-import --help -h ${global_flags}" -- "${cur}") )
             ;;
         update)
             COMPREPLY=( $(compgen -W "--repo --remote --branch --help -h ${global_flags}" -- "${cur}") )
@@ -210,7 +210,7 @@ _slacrawl() {
           _arguments '--repo[git repo path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:' '--message[commit message]:message:' '--no-commit[skip git commit]' '--push[push to origin]'
           ;;
         subscribe)
-          _arguments '--repo[local clone path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:' '--stale-after[auto-refresh age threshold]:duration:' '--no-auto-update[disable read-time auto refresh]' '--no-import[skip initial import]'
+          _arguments '--repo[local clone path]:path:_files' '--db[database path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:' '--stale-after[auto-refresh age threshold]:duration:' '--no-auto-update[disable read-time auto refresh]' '--no-import[skip initial import]'
           ;;
         update)
           _arguments '--repo[local clone path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:'

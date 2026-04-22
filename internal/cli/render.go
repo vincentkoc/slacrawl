@@ -93,7 +93,7 @@ func (a *App) printHelp() {
 	b.WriteByte('\n')
 	b.WriteString("  slacrawl init\n")
 	b.WriteString("  slacrawl doctor\n")
-	b.WriteString("  slacrawl subscribe https://example.com/private/slacrawl-archive.git\n")
+	b.WriteString("  slacrawl subscribe --db ~/.slacrawl/slacrawl.db https://example.com/private/slacrawl-archive.git\n")
 	b.WriteString("  slacrawl sync --source api --latest-only\n")
 	b.WriteString("  slacrawl search incident\n")
 	b.WriteString("  slacrawl completion bash > /usr/local/etc/bash_completion.d/slacrawl\n")

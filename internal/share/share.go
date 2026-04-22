@@ -116,10 +116,7 @@ func Pull(ctx context.Context, opts Options) error {
 	if _, err := output(ctx, opts.RepoPath, "git", "rev-parse", "--verify", remoteRef); err != nil {
 		return run(ctx, opts.RepoPath, "git", "checkout", "-B", branch)
 	}
-	if err := run(ctx, opts.RepoPath, "git", "checkout", "-B", branch, "origin/"+branch); err != nil {
-		return err
-	}
-	return run(ctx, opts.RepoPath, "git", "pull", "--ff-only", "origin", branch)
+	return run(ctx, opts.RepoPath, "git", "checkout", "-B", branch, "origin/"+branch)
 }
 
 func Commit(ctx context.Context, opts Options, message string) (bool, error) {
