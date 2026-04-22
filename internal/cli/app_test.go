@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -343,4 +344,154 @@ func TestCompletionZshOutput(t *testing.T) {
 	require.Contains(t, out, "#compdef slacrawl")
 	require.Contains(t, out, "_values 'shell' bash zsh")
 	require.Contains(t, out, "--no-color")
+}
+
+func TestPublishSubscribeAndSearchGitArchive(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	remoteRepo := filepath.Join(dir, "remote.git")
+	runGit(t, dir, "init", "--bare", remoteRepo)
+
+	publisherCfgPath := filepath.Join(dir, "publisher.toml")
+	publisherDB := filepath.Join(dir, "publisher.db")
+	publisherCfg := config.Default()
+	publisherCfg.DBPath = publisherDB
+	publisherCfg.Share.RepoPath = filepath.Join(dir, "publisher-share")
+	publisherCfg.Share.Remote = remoteRepo
+	require.NoError(t, publisherCfg.Save(publisherCfgPath))
+	seedArchiveStore(t, publisherDB, "archive seed message")
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+	require.NoError(t, app.Run(ctx, []string{"--config", publisherCfgPath, "--json", "publish", "--push"}))
+
+	readerCfgPath := filepath.Join(dir, "reader.toml")
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", readerCfgPath, "--json", "subscribe", "--repo", filepath.Join(dir, "reader-share"), remoteRepo}))
+	var subscribe map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &subscribe))
+	require.Equal(t, true, subscribe["imported"])
+
+	cfg, err := config.Load(readerCfgPath)
+	require.NoError(t, err)
+	require.False(t, cfg.Slack.Bot.Enabled)
+	require.False(t, cfg.Slack.App.Enabled)
+	require.False(t, cfg.Slack.User.Enabled)
+	require.False(t, cfg.Slack.Desktop.Enabled)
+
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", readerCfgPath, "--json", "search", "archive"}))
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows))
+	require.Len(t, rows, 1)
+	require.Equal(t, "archive seed message", rows[0]["text"])
+}
+
+func TestSearchAutoUpdatesStaleGitArchive(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	remoteRepo := filepath.Join(dir, "remote.git")
+	runGit(t, dir, "init", "--bare", remoteRepo)
+
+	publisherCfgPath := filepath.Join(dir, "publisher.toml")
+	publisherDB := filepath.Join(dir, "publisher.db")
+	publisherCfg := config.Default()
+	publisherCfg.DBPath = publisherDB
+	publisherCfg.Share.RepoPath = filepath.Join(dir, "publisher-share")
+	publisherCfg.Share.Remote = remoteRepo
+	require.NoError(t, publisherCfg.Save(publisherCfgPath))
+	seedArchiveStore(t, publisherDB, "archive baseline")
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+	require.NoError(t, app.Run(ctx, []string{"--config", publisherCfgPath, "--json", "publish", "--push"}))
+
+	readerCfgPath := filepath.Join(dir, "reader.toml")
+	readerCfg := config.Default()
+	readerCfg.DBPath = filepath.Join(dir, "reader.db")
+	readerCfg.Share.Remote = remoteRepo
+	readerCfg.Share.RepoPath = filepath.Join(dir, "reader-share")
+	readerCfg.Share.StaleAfter = "1h"
+	readerCfg.Slack.Bot.Enabled = false
+	readerCfg.Slack.App.Enabled = false
+	readerCfg.Slack.User.Enabled = false
+	readerCfg.Slack.Desktop.Enabled = false
+	readerCfg.Slack.Desktop.Path = ""
+	require.NoError(t, readerCfg.Save(readerCfgPath))
+
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", readerCfgPath, "--json", "update"}))
+
+	appendArchiveMessage(t, publisherDB, "archive delta landed")
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", publisherCfgPath, "--json", "publish", "--push"}))
+
+	readerStore, err := store.Open(readerCfg.DBPath)
+	require.NoError(t, err)
+	require.NoError(t, readerStore.SetSyncState(ctx, "share", "import", "last_import_at", time.Now().UTC().Add(-2*time.Hour).Format(time.RFC3339Nano)))
+	require.NoError(t, readerStore.Close())
+
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", readerCfgPath, "--json", "search", "delta"}))
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows))
+	require.Len(t, rows, 1)
+	require.Equal(t, "archive delta landed", rows[0]["text"])
+}
+
+func seedArchiveStore(t *testing.T, dbPath string, message string) {
+	t.Helper()
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	defer st.Close()
+
+	now := mustTime(t, "2026-03-08T18:20:43Z")
+	require.NoError(t, st.UpsertWorkspace(context.Background(), store.Workspace{ID: "T1", Name: "one", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertChannel(context.Background(), store.Channel{ID: "C1", WorkspaceID: "T1", Name: "general", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertUser(context.Background(), store.User{ID: "U1", WorkspaceID: "T1", Name: "alice", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertMessage(context.Background(), store.Message{
+		ChannelID:      "C1",
+		TS:             "1710000000.000100",
+		WorkspaceID:    "T1",
+		UserID:         "U1",
+		Text:           message,
+		NormalizedText: message,
+		SourceRank:     2,
+		SourceName:     "api-bot",
+		RawJSON:        "{}",
+		UpdatedAt:      now,
+	}, []store.Mention{{Type: "user", TargetID: "U1", DisplayText: "alice"}}))
+}
+
+func appendArchiveMessage(t *testing.T, dbPath string, message string) {
+	t.Helper()
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	defer st.Close()
+
+	now := mustTime(t, "2026-03-08T19:20:43Z")
+	require.NoError(t, st.UpsertMessage(context.Background(), store.Message{
+		ChannelID:      "C1",
+		TS:             "1710003600.000200",
+		WorkspaceID:    "T1",
+		UserID:         "U1",
+		Text:           message,
+		NormalizedText: message,
+		SourceRank:     2,
+		SourceName:     "api-bot",
+		RawJSON:        "{}",
+		UpdatedAt:      now,
+	}, []store.Mention{{Type: "user", TargetID: "U1", DisplayText: "alice"}}))
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
 }

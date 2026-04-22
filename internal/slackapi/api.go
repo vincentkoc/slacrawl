@@ -41,6 +41,7 @@ type SyncOptions struct {
 	Channels    []string
 	Since       string
 	Full        bool
+	LatestOnly  bool
 	Concurrency int
 }
 
@@ -643,9 +644,12 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 	if len(channels) == 0 {
 		return nil
 	}
-	oldestByChannel, err := c.channelOldestByID(ctx, st, workspaceID, channels, opts)
+	channels, oldestByChannel, err := c.channelSyncPlan(ctx, st, workspaceID, channels, opts)
 	if err != nil {
 		return err
+	}
+	if len(channels) == 0 {
+		return nil
 	}
 	workerCount := opts.Concurrency
 	if workerCount <= 0 {
@@ -728,30 +732,36 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 	}
 }
 
-func (c *Client) channelOldestByID(ctx context.Context, st *store.Store, workspaceID string, channels []slack.Channel, opts SyncOptions) (map[string]string, error) {
+func (c *Client) channelSyncPlan(ctx context.Context, st *store.Store, workspaceID string, channels []slack.Channel, opts SyncOptions) ([]slack.Channel, map[string]string, error) {
 	out := make(map[string]string, len(channels))
 	if opts.Since != "" {
 		for _, channel := range channels {
 			out[channel.ID] = opts.Since
 		}
-		return out, nil
+		return channels, out, nil
 	}
 	if opts.Full {
-		return out, nil
+		return channels, out, nil
 	}
 
 	cursors, err := st.ChannelSyncCursors(ctx, workspaceID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	latestByChannel := make(map[string]string, len(cursors))
 	for _, cursor := range cursors {
 		latestByChannel[cursor.ID] = cursor.LatestTS
 	}
+	selected := make([]slack.Channel, 0, len(channels))
 	for _, channel := range channels {
-		out[channel.ID] = repairOldest(latestByChannel[channel.ID], time.Hour)
+		latest := latestByChannel[channel.ID]
+		if opts.LatestOnly && latest == "" {
+			continue
+		}
+		selected = append(selected, channel)
+		out[channel.ID] = repairOldest(latest, time.Hour)
 	}
-	return out, nil
+	return selected, out, nil
 }
 
 func isChannelHistorySkipped(err error) bool {

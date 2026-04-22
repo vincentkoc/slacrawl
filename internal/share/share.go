@@ -136,7 +136,12 @@ func Commit(ctx context.Context, opts Options, message string) (bool, error) {
 	if strings.TrimSpace(message) == "" {
 		message = "sync: slack archive"
 	}
-	if err := run(ctx, opts.RepoPath, "git", "-c", "commit.gpgsign=false", "commit", "-m", message); err != nil {
+	if err := run(ctx, opts.RepoPath, "git",
+		"-c", "commit.gpgsign=false",
+		"-c", "user.name=slacrawl",
+		"-c", "user.email=slacrawl@example.invalid",
+		"commit", "-m", message,
+	); err != nil {
 		return false, err
 	}
 	return true, nil

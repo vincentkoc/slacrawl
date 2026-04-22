@@ -24,6 +24,7 @@ type Options struct {
 	Channels    []string
 	Since       string
 	Full        bool
+	LatestOnly  bool
 	Concurrency int
 }
 
@@ -45,6 +46,7 @@ func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts
 			Channels:    opts.Channels,
 			Since:       opts.Since,
 			Full:        opts.Full,
+			LatestOnly:  opts.LatestOnly,
 			Concurrency: opts.Concurrency,
 		})
 	case SourceDesktop:
@@ -55,6 +57,7 @@ func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts
 			Channels:    opts.Channels,
 			Since:       opts.Since,
 			Full:        opts.Full,
+			LatestOnly:  opts.LatestOnly,
 			Concurrency: opts.Concurrency,
 		}); err != nil {
 			return summary, err

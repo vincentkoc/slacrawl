@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/vincentkoc/slacrawl/internal/config"
+	"github.com/vincentkoc/slacrawl/internal/share"
 	"github.com/vincentkoc/slacrawl/internal/slackapi"
 	"github.com/vincentkoc/slacrawl/internal/slackdesktop"
 	"github.com/vincentkoc/slacrawl/internal/store"
@@ -82,6 +83,12 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runInit(*configPath, rest[1:], outputFormat)
 	case "doctor":
 		return a.runDoctor(ctx, *configPath, outputFormat)
+	case "publish":
+		return a.runPublish(ctx, *configPath, rest[1:], outputFormat)
+	case "subscribe":
+		return a.runSubscribe(ctx, *configPath, rest[1:], outputFormat)
+	case "update":
+		return a.runUpdate(ctx, *configPath, rest[1:], outputFormat)
 	case "status":
 		return a.runStatus(ctx, *configPath, outputFormat)
 	case "sync":
@@ -259,7 +266,7 @@ func (a *App) runStatus(ctx context.Context, configPath string, format OutputFor
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DBPath)
+	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -284,16 +291,11 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 	channels := fs.String("channels", "", "comma separated channel ids")
 	since := fs.String("since", "", "oldest slack ts or RFC3339 timestamp")
 	full := fs.Bool("full", false, "full sync")
+	latestOnly := fs.Bool("latest-only", false, "skip first-time historical backfills")
 	concurrency := fs.Int("concurrency", cfg.Sync.Concurrency, "worker count")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
-	st, err := store.Open(cfg.DBPath)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
 
 	runOptions := syncer.Options{
 		Source:      syncer.Source(*source),
@@ -301,7 +303,18 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 		Channels:    csv(*channels),
 		Since:       *since,
 		Full:        *full,
+		LatestOnly:  *latestOnly,
 		Concurrency: *concurrency,
+	}
+	st, err := a.openStore(cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if runOptions.Source != syncer.SourceDesktop {
+		if err := a.autoUpdateShare(ctx, cfg, st); err != nil {
+			return err
+		}
 	}
 	summary, err := a.runSyncTargets(ctx, cfg, st, runOptions)
 	if err != nil {
@@ -332,7 +345,7 @@ func (a *App) runSearch(ctx context.Context, configPath string, args []string, f
 	if fs.NArg() == 0 {
 		return errors.New("search query required")
 	}
-	st, err := store.Open(cfg.DBPath)
+	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -358,7 +371,7 @@ func (a *App) runMessages(ctx context.Context, configPath string, args []string,
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DBPath)
+	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -383,7 +396,7 @@ func (a *App) runMentions(ctx context.Context, configPath string, args []string,
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DBPath)
+	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -411,7 +424,7 @@ func (a *App) runSQL(ctx context.Context, configPath string, args []string, form
 	if query == "" {
 		return errors.New("sql query required")
 	}
-	st, err := store.Open(cfg.DBPath)
+	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -438,7 +451,7 @@ func (a *App) runUsers(ctx context.Context, configPath string, args []string, fo
 	if fs.NArg() > 0 {
 		query = fs.Arg(0)
 	}
-	st, err := store.Open(cfg.DBPath)
+	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -465,7 +478,7 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 	if fs.NArg() > 0 {
 		query = fs.Arg(0)
 	}
-	st, err := store.Open(cfg.DBPath)
+	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -489,7 +502,7 @@ func (a *App) runTail(ctx context.Context, configPath string, args []string) err
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DBPath)
+	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -577,6 +590,21 @@ func (a *App) writeJSON(value any) error {
 func loadConfig(path string) (config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
+}
+
+func loadConfigOrDefault(path string) (config.Config, error) {
+	cfg, err := config.Load(path)
+	if err == nil {
+		return cfg, nil
+	}
+	if !os.IsNotExist(err) {
+		return config.Config{}, err
+	}
+	cfg = config.Default()
+	if err := cfg.Normalize(); err != nil {
 		return config.Config{}, err
 	}
 	return cfg, nil
@@ -714,4 +742,235 @@ func coalesce(primary string, fallback string) string {
 
 func WithTimeout(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, 30*time.Second)
+}
+
+func (a *App) runPublish(ctx context.Context, configPath string, args []string, format OutputFormat) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("publish", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	repoPath := fs.String("repo", cfg.Share.RepoPath, "git repo path")
+	remote := fs.String("remote", cfg.Share.Remote, "git remote")
+	branch := fs.String("branch", cfg.Share.Branch, "git branch")
+	message := fs.String("message", "", "commit message")
+	noCommit := fs.Bool("no-commit", false, "skip git commit")
+	push := fs.Bool("push", false, "push to origin")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("publish takes no positional arguments")
+	}
+	st, err := a.openStore(cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	opts, err := shareOptions(*repoPath, *remote, *branch)
+	if err != nil {
+		return err
+	}
+	manifest, err := share.Export(ctx, st, opts)
+	if err != nil {
+		return err
+	}
+	committed := false
+	if !*noCommit {
+		committed, err = share.Commit(ctx, opts, *message)
+		if err != nil {
+			return err
+		}
+	}
+	if *push {
+		if err := share.Push(ctx, opts); err != nil {
+			return err
+		}
+		if err := share.MarkImported(ctx, st, manifest); err != nil {
+			return err
+		}
+	}
+	return a.writeOutput("Publish", map[string]any{
+		"repo_path":    opts.RepoPath,
+		"remote":       opts.Remote,
+		"generated_at": manifest.GeneratedAt,
+		"tables":       manifest.Tables,
+		"committed":    committed,
+		"pushed":       *push,
+	}, format, true)
+}
+
+func (a *App) runSubscribe(ctx context.Context, configPath string, args []string, format OutputFormat) error {
+	cfg, err := loadConfigOrDefault(configPath)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("subscribe", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	repoPath := fs.String("repo", cfg.Share.RepoPath, "local clone path")
+	remote := fs.String("remote", cfg.Share.Remote, "git remote")
+	branch := fs.String("branch", cfg.Share.Branch, "git branch")
+	staleAfter := fs.String("stale-after", cfg.Share.StaleAfter, "auto-refresh age threshold")
+	noAutoUpdate := fs.Bool("no-auto-update", false, "disable read-time auto refresh")
+	noImport := fs.Bool("no-import", false, "skip initial import")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 1 {
+		return errors.New("subscribe takes at most one remote")
+	}
+	if fs.NArg() == 1 {
+		*remote = fs.Arg(0)
+	}
+	if strings.TrimSpace(*remote) == "" {
+		return errors.New("subscribe requires a remote")
+	}
+
+	cfg.Share.Remote = strings.TrimSpace(*remote)
+	cfg.Share.RepoPath = *repoPath
+	cfg.Share.Branch = *branch
+	cfg.Share.AutoUpdate = !*noAutoUpdate
+	cfg.Share.StaleAfter = *staleAfter
+	cfg.Slack.Bot.Enabled = false
+	cfg.Slack.App.Enabled = false
+	cfg.Slack.User.Enabled = false
+	cfg.Slack.Desktop.Enabled = false
+	cfg.Slack.Desktop.Path = ""
+	if err := cfg.Save(configPath); err != nil {
+		return err
+	}
+	if *noImport {
+		return a.writeOutput("Subscribe", map[string]any{
+			"config_path": configPath,
+			"repo_path":   cfg.Share.RepoPath,
+			"remote":      cfg.Share.Remote,
+		}, format, true)
+	}
+
+	st, err := a.openStore(cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	opts, err := shareOptions(cfg.Share.RepoPath, cfg.Share.Remote, cfg.Share.Branch)
+	if err != nil {
+		return err
+	}
+	if err := share.Pull(ctx, opts); err != nil {
+		return err
+	}
+	manifest, imported, err := share.ImportIfChanged(ctx, st, opts)
+	if err != nil {
+		return err
+	}
+	return a.writeOutput("Subscribe", map[string]any{
+		"config_path":  configPath,
+		"repo_path":    opts.RepoPath,
+		"remote":       opts.Remote,
+		"generated_at": manifest.GeneratedAt,
+		"tables":       manifest.Tables,
+		"imported":     imported,
+	}, format, true)
+}
+
+func (a *App) runUpdate(ctx context.Context, configPath string, args []string, format OutputFormat) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	repoPath := fs.String("repo", cfg.Share.RepoPath, "local clone path")
+	remote := fs.String("remote", cfg.Share.Remote, "git remote")
+	branch := fs.String("branch", cfg.Share.Branch, "git branch")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("update takes no positional arguments")
+	}
+	st, err := a.openStore(cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	opts, err := shareOptions(*repoPath, *remote, *branch)
+	if err != nil {
+		return err
+	}
+	if err := share.Pull(ctx, opts); err != nil {
+		return err
+	}
+	manifest, imported, err := share.ImportIfChanged(ctx, st, opts)
+	if err != nil {
+		return err
+	}
+	return a.writeOutput("Update", map[string]any{
+		"repo_path":    opts.RepoPath,
+		"remote":       opts.Remote,
+		"generated_at": manifest.GeneratedAt,
+		"tables":       manifest.Tables,
+		"imported":     imported,
+	}, format, true)
+}
+
+func (a *App) openStore(cfg config.Config) (*store.Store, error) {
+	if err := config.EnsureRuntimeDirs(cfg); err != nil {
+		return nil, err
+	}
+	return store.Open(cfg.DBPath)
+}
+
+func (a *App) openReadableStore(ctx context.Context, cfg config.Config) (*store.Store, error) {
+	st, err := a.openStore(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.autoUpdateShare(ctx, cfg, st); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	return st, nil
+}
+
+func (a *App) autoUpdateShare(ctx context.Context, cfg config.Config, st *store.Store) error {
+	if !cfg.ShareEnabled() || !cfg.Share.AutoUpdate {
+		return nil
+	}
+	staleAfter, err := time.ParseDuration(cfg.Share.StaleAfter)
+	if err != nil {
+		return fmt.Errorf("invalid share.stale_after: %w", err)
+	}
+	if !share.NeedsImport(ctx, st, staleAfter) {
+		return nil
+	}
+	opts, err := shareOptions(cfg.Share.RepoPath, cfg.Share.Remote, cfg.Share.Branch)
+	if err != nil {
+		return err
+	}
+	if err := share.Pull(ctx, opts); err != nil {
+		return err
+	}
+	_, _, err = share.ImportIfChanged(ctx, st, opts)
+	if errors.Is(err, share.ErrNoManifest) {
+		return nil
+	}
+	return err
+}
+
+func shareOptions(repoPath, remote, branch string) (share.Options, error) {
+	expandedRepo, err := config.ExpandPath(repoPath)
+	if err != nil {
+		return share.Options{}, err
+	}
+	if strings.TrimSpace(branch) == "" {
+		branch = "main"
+	}
+	return share.Options{
+		RepoPath: expandedRepo,
+		Remote:   strings.TrimSpace(remote),
+		Branch:   branch,
+	}, nil
 }

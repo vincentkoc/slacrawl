@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 	"github.com/stretchr/testify/require"
@@ -691,4 +692,41 @@ func TestHandleEventsAPIEventIgnoresUnknown(t *testing.T) {
 
 	client := New(config.Tokens{Bot: "xoxb-test"})
 	require.NoError(t, client.HandleEventsAPIEvent(context.Background(), st, "T123", slackevents.EventsAPIEvent{}))
+}
+
+func TestChannelSyncPlanLatestOnlySkipsUnsyncedChannels(t *testing.T) {
+	st := mustStore(t)
+	defer st.Close()
+
+	now := time.Date(2026, 3, 8, 1, 2, 3, 0, time.UTC)
+	require.NoError(t, st.UpsertChannel(context.Background(), store.Channel{
+		ID:          "C123",
+		WorkspaceID: "T123",
+		Name:        "general",
+		Kind:        "public_channel",
+		RawJSON:     "{}",
+		UpdatedAt:   now,
+	}))
+	require.NoError(t, st.UpsertMessage(context.Background(), store.Message{
+		ChannelID:      "C123",
+		TS:             "1710000000.000100",
+		WorkspaceID:    "T123",
+		Text:           "already synced",
+		NormalizedText: "already synced",
+		SourceRank:     2,
+		SourceName:     SourceBot,
+		RawJSON:        "{}",
+		UpdatedAt:      now,
+	}, nil))
+
+	client := &Client{}
+	channels, oldestByChannel, err := client.channelSyncPlan(context.Background(), st, "T123", []slack.Channel{
+		{GroupConversation: slack.GroupConversation{Conversation: slack.Conversation{ID: "C123"}, Name: "general"}},
+		{GroupConversation: slack.GroupConversation{Conversation: slack.Conversation{ID: "C999"}, Name: "new-channel"}},
+	}, SyncOptions{LatestOnly: true})
+	require.NoError(t, err)
+	require.Len(t, channels, 1)
+	require.Equal(t, "C123", channels[0].ID)
+	require.Contains(t, oldestByChannel, "C123")
+	require.NotContains(t, oldestByChannel, "C999")
 }
