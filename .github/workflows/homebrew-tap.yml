@@ -1,6 +1,12 @@
 name: Update Homebrew Tap
 
 on:
+  workflow_call:
+    inputs:
+      tag_name:
+        description: "Release tag to sync (for example: v0.1.0)"
+        required: true
+        type: string
   release:
     types:
       - published

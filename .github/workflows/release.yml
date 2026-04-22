@@ -107,3 +107,10 @@ jobs:
           for pkg in dist/*.rpm; do
             cloudsmith push rpm "${TARGET}" "${pkg}" --no-wait-for-sync
           done
+
+  update-homebrew-tap:
+    needs: release
+    uses: ./.github/workflows/homebrew-tap.yml
+    with:
+      tag_name: ${{ inputs.tag_name || github.ref_name }}
+    secrets: inherit
