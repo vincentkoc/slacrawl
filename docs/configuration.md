@@ -50,6 +50,13 @@ full_history = true
 
 [search]
 default_mode = "fts"
+
+[share]
+remote = ""
+repo_path = "~/.slacrawl/share"
+branch = "main"
+auto_update = true
+stale_after = "15m"
 ```
 
 ## Workspace Selection
@@ -79,6 +86,27 @@ Behavior:
 - `tail` without `--workspace` starts one live tail per configured `[[workspaces]]` entry
 - `search`, `messages`, `mentions`, `users`, and `channels` accept `--workspace` to filter the shared SQLite database
 - if `[[workspaces]]` is empty, the legacy top-level `[slack.*]` token config is used
+
+## Git Archive Sharing
+
+Use `[share]` when you want one machine to publish a private Slack archive snapshot and other machines to query it locally without Slack API credentials.
+
+```toml
+[share]
+remote = "git@github.com:your-org/private-slacrawl-archive.git"
+repo_path = "~/.slacrawl/share"
+branch = "main"
+auto_update = true
+stale_after = "15m"
+```
+
+Behavior:
+
+- `publish` exports gzipped JSONL table shards plus `manifest.json` into `repo_path`
+- `subscribe` writes a git-reader config, disables Slack API and desktop sources for that config, clones the repo, and imports the snapshot
+- `update` pulls and imports only when the manifest changed
+- read commands auto-refresh stale git-backed snapshots before querying when `auto_update = true`
+- `stale_after` controls how old the last successful import can be before the next read pulls/imports again
 
 ## Token Sources
 
@@ -189,6 +217,16 @@ Notes:
 - higher values increase API fan-out, not write parallelism inside SQLite
 - useful mainly for multi-channel API sync, not single-channel runs
 - `--concurrency` on the CLI overrides the config value for that run
+
+### `latest-only`
+
+Use `sync --latest-only` when you want to refresh only channels that already have a stored cursor.
+
+Notes:
+
+- useful for fast publisher jobs that already seeded history once
+- channels with no local history are skipped instead of triggering a first-time backfill
+- `--full` overrides this behavior and still does the full crawl
 
 ## Recommended Profiles
 
