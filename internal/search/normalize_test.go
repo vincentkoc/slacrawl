@@ -28,3 +28,18 @@ func TestExtractMentions(t *testing.T) {
 	require.Equal(t, "U123", mentions[0].TargetID)
 	require.Equal(t, "channel", mentions[1].Type)
 }
+
+func TestNormalizeMessageSanitizesMalformedUnicodeAndWhitespace(t *testing.T) {
+	msg := slack.Message{}
+	msg.Text = "A\x00\u200b  cafe\u0301\tteam\uff01"
+
+	normalized := NormalizeMessage(msg)
+	require.Equal(t, "A caf\u00e9 team!", normalized)
+}
+
+func TestExtractMentionsSanitizesNoisyText(t *testing.T) {
+	mentions := ExtractMentions("hello\u200b <@U123|alice>\x00 and <#C123|eng>")
+	require.Len(t, mentions, 2)
+	require.Equal(t, "alice", mentions[0].DisplayText)
+	require.Equal(t, "eng", mentions[1].DisplayText)
+}

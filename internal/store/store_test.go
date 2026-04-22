@@ -168,3 +168,26 @@ func TestOpenFailsForNewerSchemaVersion(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "newer than this slacrawl build supports")
 }
+
+func TestOpenCreatesReadPathIndexes(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	rows, err := s.QueryReadOnly(context.Background(), `
+select name
+from sqlite_master
+where type = 'index'
+  and name in (
+    'idx_messages_workspace_ts',
+    'idx_messages_workspace_channel_ts',
+    'idx_messages_workspace_user_ts',
+    'idx_messages_key_expr',
+    'idx_message_mentions_target_ts',
+    'idx_sync_state_updated'
+  )
+order by name asc`)
+	require.NoError(t, err)
+	require.Len(t, rows, 6)
+}

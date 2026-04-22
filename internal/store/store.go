@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 const schema = `
 pragma foreign_keys = on;
@@ -80,6 +80,11 @@ create table if not exists messages (
   primary key (channel_id, ts)
 );
 
+create index if not exists idx_messages_workspace_ts on messages(workspace_id, ts desc);
+create index if not exists idx_messages_workspace_channel_ts on messages(workspace_id, channel_id, ts desc);
+create index if not exists idx_messages_workspace_user_ts on messages(workspace_id, user_id, ts desc);
+create index if not exists idx_messages_key_expr on messages((channel_id || '|' || ts));
+
 create table if not exists message_events (
   id integer primary key autoincrement,
   channel_id text not null,
@@ -108,6 +113,8 @@ create table if not exists message_mentions (
   primary key (channel_id, ts, mention_type, target_id)
 );
 
+create index if not exists idx_message_mentions_target_ts on message_mentions(target_id, ts desc);
+
 create table if not exists embedding_jobs (
   id integer primary key autoincrement,
   channel_id text not null,
@@ -117,6 +124,7 @@ create table if not exists embedding_jobs (
 );
 
 create virtual table if not exists message_fts using fts5(message_key unindexed, content);
+create index if not exists idx_sync_state_updated on sync_state(updated_at desc);
 `
 
 type Store struct {

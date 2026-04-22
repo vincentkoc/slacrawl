@@ -3,6 +3,9 @@ package search
 import (
 	"regexp"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/slack-go/slack"
 )
@@ -20,7 +23,7 @@ type Mention struct {
 }
 
 func NormalizeMessage(msg slack.Message) string {
-	text := msg.Text
+	text := sanitizeText(msg.Text)
 	text = userMentionRe.ReplaceAllStringFunc(text, func(match string) string {
 		parts := userMentionRe.FindStringSubmatch(match)
 		if parts[2] != "" {
@@ -52,10 +55,10 @@ func NormalizeMessage(msg slack.Message) string {
 	parts := []string{strings.TrimSpace(text)}
 	for _, file := range msg.Files {
 		if file.Title != "" {
-			parts = append(parts, file.Title)
+			parts = append(parts, sanitizeText(file.Title))
 		}
 		if file.Name != "" && file.Name != file.Title {
-			parts = append(parts, file.Name)
+			parts = append(parts, sanitizeText(file.Name))
 		}
 	}
 	if msg.Edited != nil {
@@ -71,6 +74,7 @@ func NormalizeMessage(msg slack.Message) string {
 }
 
 func ExtractMentions(text string) []Mention {
+	text = sanitizeText(text)
 	var mentions []Mention
 	for _, match := range userMentionRe.FindAllStringSubmatch(text, -1) {
 		mentions = append(mentions, Mention{
@@ -104,4 +108,42 @@ func filterEmpty(parts []string) []string {
 		}
 	}
 	return filtered
+}
+
+func sanitizeText(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	raw = strings.ToValidUTF8(raw, "\uFFFD")
+	raw = norm.NFKC.String(raw)
+	var b strings.Builder
+	b.Grow(len(raw))
+	lastSpace := false
+	for _, r := range raw {
+		switch {
+		case isIgnoredRune(r):
+			continue
+		case unicode.IsSpace(r):
+			if lastSpace {
+				continue
+			}
+			b.WriteByte(' ')
+			lastSpace = true
+		default:
+			b.WriteRune(r)
+			lastSpace = false
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func isIgnoredRune(r rune) bool {
+	switch r {
+	case '\u200b', '\u200c', '\u200d', '\ufeff':
+		return true
+	}
+	if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
+		return true
+	}
+	return false
 }
