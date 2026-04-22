@@ -711,6 +711,26 @@ limit ?
 	return out, rows.Err()
 }
 
+func (s *Store) RebuildSearchIndexes(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `delete from message_fts`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+insert into message_fts (message_key, content)
+select channel_id || '|' || ts, normalized_text
+from messages
+`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func MarshalRaw(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
