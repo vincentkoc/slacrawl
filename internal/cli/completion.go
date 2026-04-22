@@ -52,7 +52,7 @@ var (
 		"mentions":   {"--workspace", "--target", "--limit", "--help", "-h"},
 		"sql":        {"--help", "-h"},
 		"users":      {"--workspace", "--help", "-h"},
-		"channels":   {"--workspace", "--help", "-h"},
+		"channels":   {"--workspace", "--kind", "--help", "-h"},
 		"status":     {"--help", "-h"},
 		"completion": {"--help", "-h"},
 	}
@@ -108,19 +108,23 @@ _slacrawl()
         esac
     done
 
-    case "${prev}" in
-        --format)
-            COMPREPLY=( $(compgen -W "text json log" -- "${cur}") )
-            return
-            ;;
-        --source)
-            COMPREPLY=( $(compgen -W "api desktop all" -- "${cur}") )
-            return
-            ;;
-        completion)
-            COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") )
-            return
-            ;;
+	case "${prev}" in
+		--format)
+			COMPREPLY=( $(compgen -W "text json log" -- "${cur}") )
+			return
+			;;
+		--source)
+			COMPREPLY=( $(compgen -W "api desktop all" -- "${cur}") )
+			return
+			;;
+		--kind)
+			COMPREPLY=( $(compgen -W "im mpim public_channel private_channel" -- "${cur}") )
+			return
+			;;
+		completion)
+			COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") )
+			return
+			;;
     esac
 
     case "${command}" in
@@ -166,9 +170,9 @@ _slacrawl()
         users)
             COMPREPLY=( $(compgen -W "--workspace --help -h ${global_flags}" -- "${cur}") )
             ;;
-        channels)
-            COMPREPLY=( $(compgen -W "--workspace --help -h ${global_flags}" -- "${cur}") )
-            ;;
+		channels)
+			COMPREPLY=( $(compgen -W "--workspace --kind --help -h ${global_flags}" -- "${cur}") )
+			;;
         completion)
             COMPREPLY=( $(compgen -W "bash zsh --help -h ${global_flags}" -- "${cur}") )
             ;;
@@ -252,9 +256,9 @@ _slacrawl() {
         users)
           _arguments '--workspace[workspace id]:workspace id:'
           ;;
-        channels)
-          _arguments '--workspace[workspace id]:workspace id:'
-          ;;
+		channels)
+		  _arguments '--workspace[workspace id]:workspace id:' '--kind[channel kind]:kind:(im mpim public_channel private_channel)'
+		  ;;
         completion)
           _values 'shell' bash zsh
           ;;

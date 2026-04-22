@@ -40,6 +40,7 @@ concurrency = 4
 repair_every = "30m"
 desktop_refresh_every = "5m"
 full_history = true
+# include_dms = true # requires SLACK_USER_TOKEN with im:history, mpim:history, im:read, mpim:read scopes
 
 [search]
 default_mode = "fts"

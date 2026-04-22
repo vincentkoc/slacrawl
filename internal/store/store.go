@@ -616,14 +616,19 @@ limit ?
 }
 
 func (s *Store) Channels(ctx context.Context, workspaceID string, query string, limit int) ([]ChannelRow, error) {
+	return s.ChannelsByKind(ctx, workspaceID, query, "", limit)
+}
+
+func (s *Store) ChannelsByKind(ctx context.Context, workspaceID string, query string, kind string, limit int) ([]ChannelRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 select workspace_id, id, name, kind
 from channels
 where (? = '' or workspace_id = ?)
   and (? = '' or id = ? or name like ?)
+  and (? = '' or kind = ?)
 order by name asc
 limit ?
-`, workspaceID, workspaceID, query, query, "%"+query+"%", limit)
+`, workspaceID, workspaceID, query, query, "%"+query+"%", kind, kind, limit)
 	if err != nil {
 		return nil, err
 	}

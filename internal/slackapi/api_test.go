@@ -76,6 +76,71 @@ func TestSyncWithoutUserTokenMarksPartialCoverage(t *testing.T) {
 	require.Equal(t, "partial", value)
 }
 
+func TestSyncIncludesDMsAndMPIMsWhenEnabled(t *testing.T) {
+	server := newDMSyncSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot:  "xoxb-test",
+		User: "xoxp-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	err := client.Sync(context.Background(), st, SyncOptions{})
+	require.NoError(t, err)
+
+	channels, err := st.Channels(context.Background(), "T123", "", 10)
+	require.NoError(t, err)
+	kindByID := make(map[string]string, len(channels))
+	nameByID := make(map[string]string, len(channels))
+	for _, row := range channels {
+		kindByID[row.ID] = row.Kind
+		nameByID[row.ID] = row.Name
+	}
+	require.Equal(t, "im", kindByID["D123"])
+	require.Equal(t, "mpim", kindByID["G123"])
+	require.Equal(t, "alice", nameByID["D123"])
+	require.Equal(t, "alice,bob", nameByID["G123"])
+
+	rows, err := st.QueryReadOnly(context.Background(), `
+select source_name, source_rank
+from messages
+where channel_id = 'D123'
+limit 1
+`)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "api-user", rows[0]["source_name"])
+	require.Equal(t, int64(1), rows[0]["source_rank"])
+}
+
+func TestSyncSkipsDMsWhenDisabled(t *testing.T) {
+	server := newDMSyncSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot:  "xoxb-test",
+		User: "xoxp-test",
+	}, server.URL()+"/", server.Client()).WithIncludeDMs(false)
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	err := client.Sync(context.Background(), st, SyncOptions{})
+	require.NoError(t, err)
+
+	channels, err := st.Channels(context.Background(), "T123", "", 10)
+	require.NoError(t, err)
+	for _, channel := range channels {
+		require.NotEqual(t, "im", channel.Kind)
+		require.NotEqual(t, "mpim", channel.Kind)
+	}
+}
+
 func TestSyncWithInvalidUserTokenStillMarksPartialCoverage(t *testing.T) {
 	server := newInvalidUserSlackServer(t)
 	defer server.Close()
@@ -120,6 +185,41 @@ func TestDoctorWithInvalidUserTokenDoesNotReportFullCoverage(t *testing.T) {
 	require.False(t, diag.UserAuthAvailable)
 	require.Equal(t, "partial", diag.ThreadCoverage)
 	require.Equal(t, "invalid_auth", diag.UserAuthError)
+	require.False(t, diag.DMsIncluded)
+}
+
+func TestDoctorWithValidUserTokenReportsDMInclusion(t *testing.T) {
+	server := newMockSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot:  "xoxb-test",
+		App:  "xapp-test",
+		User: "xoxp-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	diag, err := client.Doctor(context.Background())
+	require.NoError(t, err)
+	require.True(t, diag.UserAuthAvailable)
+	require.True(t, diag.DMsIncluded)
+	require.Equal(t, "", diag.DMsMissingScope)
+}
+
+func TestDoctorCanDisableDMInclusion(t *testing.T) {
+	server := newMockSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot:  "xoxb-test",
+		User: "xoxp-test",
+	}, server.URL()+"/", server.Client()).WithIncludeDMs(false)
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	diag, err := client.Doctor(context.Background())
+	require.NoError(t, err)
+	require.True(t, diag.UserAuthAvailable)
+	require.False(t, diag.DMsIncluded)
 }
 
 func TestSyncSkipsChannelsTheBotCannotRead(t *testing.T) {
@@ -456,6 +556,49 @@ func newMockSlackServer(t *testing.T) *mockSlackServer {
 			_, _ = w.Write([]byte(`{"ok":true,"has_more":false,"messages":[{"type":"message","subtype":"message_replied","user":"U234","text":"reply message","thread_ts":"1710000000.000100","ts":"1710000001.000200"}],"response_metadata":{"next_cursor":""}}`))
 		case "/users.list":
 			_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U123","name":"alice","real_name":"Alice Example","profile":{"display_name":"alice","title":"Engineer"}}],"response_metadata":{"next_cursor":""}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return mock
+}
+
+func newDMSyncSlackServer(t *testing.T) *mockSlackServer {
+	t.Helper()
+	mock := &mockSlackServer{counts: map[string]int{}, lastOld: map[string]string{}}
+	mock.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/auth.test":
+			_, _ = w.Write([]byte(`{"ok":true,"team":"Test Team","team_id":"T123","user":"bot","user_id":"Ubot","bot_id":"B123"}`))
+		case "/conversations.list":
+			values := mustFormValues(r)
+			switch values.Get("types") {
+			case "im,mpim":
+				_, _ = w.Write([]byte(`{"ok":true,"channels":[
+					{"id":"D123","is_im":true,"is_private":true,"user":"U123"},
+					{"id":"G123","is_mpim":true,"is_private":true,"members":["U123","U456"]}
+				],"response_metadata":{"next_cursor":""}}`))
+			default:
+				_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C123","name":"general","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":true,"topic":{"value":"topic"},"purpose":{"value":"purpose"}}],"response_metadata":{"next_cursor":""}}`))
+			}
+		case "/conversations.history":
+			values := mustFormValues(r)
+			switch values.Get("channel") {
+			case "C123":
+				_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U123","text":"root message","ts":"1710000000.000100"}],"response_metadata":{"next_cursor":""}}`))
+			case "D123":
+				_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U123","text":"dm message","ts":"1710000002.000100"}],"response_metadata":{"next_cursor":""}}`))
+			case "G123":
+				_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U456","text":"mpim message","ts":"1710000003.000100"}],"response_metadata":{"next_cursor":""}}`))
+			default:
+				http.NotFound(w, r)
+			}
+		case "/users.list":
+			_, _ = w.Write([]byte(`{"ok":true,"members":[
+				{"id":"U123","name":"alice-user","real_name":"Alice Example","profile":{"display_name":"alice","title":"Engineer"}},
+				{"id":"U456","name":"bob-user","real_name":"Bob Example","profile":{"display_name":"bob","title":"Engineer"}}
+			],"response_metadata":{"next_cursor":""}}`))
 		default:
 			http.NotFound(w, r)
 		}

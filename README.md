@@ -26,6 +26,7 @@ Data stays on your machine. You can run it in API mode, desktop mode, or a hybri
 - local SQLite storage with full-text search backed by SQLite FTS5
 - workspace, channel, user, and message sync
 - thread reply backfill when a user token is available
+- DM and MPIM sync when a user token is available
 - incremental API history sync by default, with `--full` reserved for deliberate backfills
 - `sync --latest-only` for cheap incremental refreshes on already-seeded channels
 - mention extraction for structured querying
@@ -51,7 +52,6 @@ Data stays on your machine. You can run it in API mode, desktop mode, or a hybri
 
 ## Not Yet Included
 
-- DMs and MPIMs
 - attachment blob downloads
 - write-back actions
 - public Marketplace-style distribution hardening
@@ -179,6 +179,8 @@ Choose the path that matches your setup:
 slacrawl import ./my-export.zip --workspace T01234567
 slacrawl import ./extracted-export/ --workspace T01234567 --dry-run
 ```
+
+Set `SLACK_USER_TOKEN` with `im:history`, `mpim:history`, `im:read`, and `mpim:read` scopes to include DMs and MPIMs in API sync.
 
 ## Output Modes
 

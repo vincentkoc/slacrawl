@@ -29,7 +29,6 @@ V1 scope:
 
 Out of scope for V1:
 
-- DMs and MPIMs
 - attachment blob downloads by default
 - write-back actions
 - Marketplace/public-distribution hardening
@@ -86,6 +85,15 @@ Tables:
 - `message_mentions`
 - `embedding_jobs`
 - `message_fts`
+
+`channels.kind` values include:
+
+- `public_channel`
+- `private_channel`
+- `public`
+- `private`
+- `im`
+- `mpim`
 
 Optional later:
 

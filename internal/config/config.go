@@ -59,6 +59,7 @@ type SyncConfig struct {
 	RepairEvery         string `toml:"repair_every"`
 	DesktopRefreshEvery string `toml:"desktop_refresh_every"`
 	FullHistory         bool   `toml:"full_history"`
+	IncludeDMs          *bool  `toml:"include_dms"`
 }
 
 type SearchConfig struct {
@@ -270,6 +271,13 @@ func (c Config) WorkspaceIDs() []string {
 
 func (c Config) ShareEnabled() bool {
 	return strings.TrimSpace(c.Share.Remote) != ""
+}
+
+func (c Config) IncludeDMsResolved(hasUserToken bool) bool {
+	if c.Sync.IncludeDMs != nil {
+		return *c.Sync.IncludeDMs
+	}
+	return hasUserToken
 }
 
 func EnsureRuntimeDirs(c Config) error {

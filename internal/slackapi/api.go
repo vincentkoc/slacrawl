@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +31,8 @@ type Diagnostics struct {
 	AppConfigured     bool   `json:"app_configured"`
 	UserConfigured    bool   `json:"user_configured"`
 	ThreadCoverage    string `json:"thread_coverage"`
+	DMsIncluded       bool   `json:"dms_included"`
+	DMsMissingScope   string `json:"dms_missing_scope,omitempty"`
 	BotAuthTeamID     string `json:"bot_auth_team_id,omitempty"`
 	BotAuthTeam       string `json:"bot_auth_team,omitempty"`
 	UserAuthAvailable bool   `json:"user_auth_available"`
@@ -50,6 +54,7 @@ type Client struct {
 	user         *slack.Client
 	tokens       config.Tokens
 	appToken     string
+	includeDMs   bool
 	sleep        func(context.Context, time.Duration) error
 	now          func() time.Time
 	socketModeFn func(*slack.Client) socketModeRunner
@@ -61,10 +66,11 @@ func New(tokens config.Tokens) *Client {
 
 func NewWithOptions(tokens config.Tokens, apiURL string, httpClient *http.Client) *Client {
 	client := &Client{
-		tokens:   tokens,
-		appToken: tokens.App,
-		sleep:    sleepContext,
-		now:      func() time.Time { return time.Now().UTC() },
+		tokens:     tokens,
+		appToken:   tokens.App,
+		includeDMs: tokens.User != "",
+		sleep:      sleepContext,
+		now:        func() time.Time { return time.Now().UTC() },
 	}
 
 	buildOptions := func(includeAppToken bool) []slack.Option {
@@ -93,6 +99,11 @@ func NewWithOptions(tokens config.Tokens, apiURL string, httpClient *http.Client
 	return client
 }
 
+func (c *Client) WithIncludeDMs(include bool) *Client {
+	c.includeDMs = include
+	return c
+}
+
 func (c *Client) Doctor(ctx context.Context) (Diagnostics, error) {
 	diag := Diagnostics{
 		BotConfigured:  c.tokens.Bot != "",
@@ -116,6 +127,10 @@ func (c *Client) Doctor(ctx context.Context) (Diagnostics, error) {
 		if _, err := c.authTest(ctx, c.user); err == nil {
 			diag.UserAuthAvailable = true
 			diag.ThreadCoverage = "full"
+			if c.includeDMs {
+				diag.DMsIncluded = true
+				diag.DMsMissingScope = c.dmMissingScope(ctx, resp.TeamID)
+			}
 		} else {
 			diag.UserAuthError = authErrorReason(err)
 		}
@@ -170,9 +185,57 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 		return err
 	}
 
-	users, err := c.getUsers(ctx, c.bot)
-	if err != nil {
-		return err
+	var (
+		users    []slack.User
+		userByID map[string]slack.User
+	)
+	if c.includeDMs && userRepliesAvailable && c.user != nil {
+		users, err = c.getUsers(ctx, c.bot)
+		if err != nil {
+			return err
+		}
+		userByID = make(map[string]slack.User, len(users))
+		for _, user := range users {
+			userByID[user.ID] = user
+		}
+
+		dms, err := c.fetchDMs(ctx, workspaceID)
+		if err != nil {
+			if isMissingScopeError(err) {
+				if setErr := st.SetSyncState(ctx, SourceUser, "dms", workspaceID, "missing_scope"); setErr != nil {
+					return setErr
+				}
+			} else {
+				return err
+			}
+		} else {
+			selectedDMs := make([]slack.Channel, 0, len(dms))
+			for _, channel := range dms {
+				if len(allow) > 0 {
+					if _, ok := allow[channel.ID]; !ok {
+						continue
+					}
+				}
+				channel.Name = dmChannelName(channel, userByID)
+				selectedDMs = append(selectedDMs, channel)
+			}
+			if err := c.syncChannelsWithSource(ctx, st, workspaceID, selectedDMs, opts, now, userRepliesAvailable, channelSyncSource{
+				historyClient:    c.user,
+				sourceName:       SourceUser,
+				sourceRank:       1,
+				allowJoin:        false,
+				skipMissingScope: true,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	if users == nil {
+		users, err = c.getUsers(ctx, c.bot)
+		if err != nil {
+			return err
+		}
 	}
 	for _, user := range users {
 		if err := st.UpsertUser(ctx, toStoreUser(workspaceID, user, now)); err != nil {
@@ -281,31 +344,53 @@ func (c *Client) fetchChannels(ctx context.Context, workspaceID string) ([]slack
 }
 
 func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, oldest string, now time.Time, userRepliesAvailable bool) error {
+	return c.syncChannelMessagesWithSource(ctx, st, workspaceID, channel, oldest, now, userRepliesAvailable, channelSyncSource{
+		historyClient: c.bot,
+		sourceName:    SourceBot,
+		sourceRank:    2,
+		allowJoin:     true,
+	})
+}
+
+func (c *Client) syncChannelMessagesWithSource(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, oldest string, now time.Time, userRepliesAvailable bool, source channelSyncSource) error {
+	if source.historyClient == nil {
+		return errors.New("history client is required")
+	}
+	if source.sourceName == "" {
+		source.sourceName = SourceBot
+	}
+	if source.sourceRank == 0 {
+		source.sourceRank = 2
+	}
+
 	cursor := ""
 	joined := false
 	for {
-		resp, err := c.getConversationHistory(ctx, c.bot, &slack.GetConversationHistoryParameters{
+		resp, err := c.getConversationHistory(ctx, source.historyClient, &slack.GetConversationHistoryParameters{
 			ChannelID: channel.ID,
 			Cursor:    cursor,
 			Limit:     200,
 			Oldest:    oldest,
 		})
 		if err != nil {
-			if !joined && channelSkipReason(err) == "not_in_channel" && !channel.IsPrivate {
+			if source.skipMissingScope && isMissingScopeError(err) {
+				return st.SetSyncState(ctx, source.sourceName, "channel_skip", channel.ID, "missing_scope")
+			}
+			if source.allowJoin && !joined && channelSkipReason(err) == "not_in_channel" && !channel.IsPrivate {
 				joinErr := c.joinConversation(ctx, channel.ID)
 				if joinErr == nil {
 					joined = true
-					if setErr := st.SetSyncState(ctx, SourceBot, "channel_join", channel.ID, "joined"); setErr != nil {
+					if setErr := st.SetSyncState(ctx, source.sourceName, "channel_join", channel.ID, "joined"); setErr != nil {
 						return setErr
 					}
 					continue
 				}
-				if setErr := st.SetSyncState(ctx, SourceBot, "channel_join", channel.ID, "failed:"+authErrorReason(joinErr)); setErr != nil {
+				if setErr := st.SetSyncState(ctx, source.sourceName, "channel_join", channel.ID, "failed:"+authErrorReason(joinErr)); setErr != nil {
 					return setErr
 				}
 			}
 			if isChannelHistorySkipped(err) {
-				return st.SetSyncState(ctx, SourceBot, "channel_skip", channel.ID, channelSkipReason(err))
+				return st.SetSyncState(ctx, source.sourceName, "channel_skip", channel.ID, channelSkipReason(err))
 			}
 			return fmt.Errorf("channel %s history: %w", channel.ID, err)
 		}
@@ -313,7 +398,7 @@ func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, works
 			if msg.Channel == "" {
 				msg.Channel = channel.ID
 			}
-			if err := st.UpsertMessage(ctx, toStoreMessage(workspaceID, msg, SourceBot, 2, now), toStoreMentions(msg)); err != nil {
+			if err := st.UpsertMessage(ctx, toStoreMessage(workspaceID, msg, source.sourceName, source.sourceRank, now), toStoreMentions(msg)); err != nil {
 				return err
 			}
 			if msg.ReplyCount > 0 && userRepliesAvailable {
@@ -499,8 +584,13 @@ func (c *Client) joinConversation(ctx context.Context, channelID string) error {
 
 func toStoreChannel(workspaceID string, channel slack.Channel, now time.Time) store.Channel {
 	kind := "public_channel"
-	if channel.IsPrivate {
-		kind = "private_channel"
+	switch dmChannelKind(channel) {
+	case "im", "mpim":
+		kind = dmChannelKind(channel)
+	case "":
+		if channel.IsPrivate {
+			kind = "private_channel"
+		}
 	}
 	return store.Channel{
 		ID:          channel.ID,
@@ -640,7 +730,24 @@ func tickerChan(ticker *time.Ticker) <-chan time.Time {
 	return ticker.C
 }
 
+type channelSyncSource struct {
+	historyClient    *slack.Client
+	sourceName       string
+	sourceRank       int
+	allowJoin        bool
+	skipMissingScope bool
+}
+
 func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID string, channels []slack.Channel, opts SyncOptions, now time.Time, userRepliesAvailable bool) error {
+	return c.syncChannelsWithSource(ctx, st, workspaceID, channels, opts, now, userRepliesAvailable, channelSyncSource{
+		historyClient: c.bot,
+		sourceName:    SourceBot,
+		sourceRank:    2,
+		allowJoin:     true,
+	})
+}
+
+func (c *Client) syncChannelsWithSource(ctx context.Context, st *store.Store, workspaceID string, channels []slack.Channel, opts SyncOptions, now time.Time, userRepliesAvailable bool, source channelSyncSource) error {
 	if len(channels) == 0 {
 		return nil
 	}
@@ -663,7 +770,7 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 			if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
 				return err
 			}
-			if err := c.syncChannelMessages(ctx, st, workspaceID, channel, oldestByChannel[channel.ID], now, userRepliesAvailable); err != nil {
+			if err := c.syncChannelMessagesWithSource(ctx, st, workspaceID, channel, oldestByChannel[channel.ID], now, userRepliesAvailable, source); err != nil {
 				return err
 			}
 		}
@@ -687,7 +794,7 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 				cancel()
 				return
 			}
-			if err := c.syncChannelMessages(ctx, st, workspaceID, channel, oldestByChannel[channel.ID], now, userRepliesAvailable); err != nil {
+			if err := c.syncChannelMessagesWithSource(ctx, st, workspaceID, channel, oldestByChannel[channel.ID], now, userRepliesAvailable, source); err != nil {
 				select {
 				case errCh <- err:
 				default:
@@ -775,6 +882,82 @@ func channelSkipReason(err error) string {
 		return slackErr.Err
 	}
 	return ""
+}
+
+func isMissingScopeError(err error) bool {
+	return channelSkipReason(err) == "missing_scope"
+}
+
+func (c *Client) dmMissingScope(ctx context.Context, workspaceID string) string {
+	if !c.includeDMs || c.user == nil {
+		return ""
+	}
+	missing := make(map[string]struct{})
+	addMissing := func(scope string) {
+		if scope == "" {
+			return
+		}
+		missing[scope] = struct{}{}
+	}
+
+	dms, err := c.fetchDMs(ctx, workspaceID)
+	if err != nil {
+		if isMissingScopeError(err) {
+			addMissing("im:read")
+			addMissing("mpim:read")
+		}
+		return joinScopes(missing)
+	}
+
+	var sampleIM, sampleMPIM string
+	for _, dm := range dms {
+		switch dmChannelKind(dm) {
+		case "im":
+			if sampleIM == "" {
+				sampleIM = dm.ID
+			}
+		case "mpim":
+			if sampleMPIM == "" {
+				sampleMPIM = dm.ID
+			}
+		}
+		if sampleIM != "" && sampleMPIM != "" {
+			break
+		}
+	}
+
+	if sampleIM != "" {
+		_, historyErr := c.getConversationHistory(ctx, c.user, &slack.GetConversationHistoryParameters{
+			ChannelID: sampleIM,
+			Limit:     1,
+		})
+		if isMissingScopeError(historyErr) {
+			addMissing("im:history")
+		}
+	}
+	if sampleMPIM != "" {
+		_, historyErr := c.getConversationHistory(ctx, c.user, &slack.GetConversationHistoryParameters{
+			ChannelID: sampleMPIM,
+			Limit:     1,
+		})
+		if isMissingScopeError(historyErr) {
+			addMissing("mpim:history")
+		}
+	}
+
+	return joinScopes(missing)
+}
+
+func joinScopes(scopes map[string]struct{}) string {
+	if len(scopes) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(scopes))
+	for scope := range scopes {
+		out = append(out, scope)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
 }
 
 func (c *Client) userAuthAvailable(ctx context.Context) bool {

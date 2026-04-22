@@ -286,6 +286,15 @@ func TestWorkspaceFilteredReadCommands(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &channels))
 	require.Len(t, channels, 1)
 	require.Equal(t, "T1", channels[0]["workspace_id"])
+
+	stdout.Reset()
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "--json", "channels", "--workspace", "T1", "--kind", "public_channel"}))
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &channels))
+	require.Len(t, channels, 1)
+
+	stdout.Reset()
+	err = app.Run(context.Background(), []string{"--config", configPath, "--json", "channels", "--workspace", "T1", "--kind", "unknown"})
+	require.ErrorContains(t, err, "invalid channel kind")
 }
 
 func TestHelpIncludesBannerAndUsage(t *testing.T) {
@@ -435,6 +444,7 @@ func TestCompletionBashOutput(t *testing.T) {
 	require.Contains(t, out, "completion")
 	require.Contains(t, out, "report")
 	require.Contains(t, out, "--format")
+	require.Contains(t, out, "--kind")
 }
 
 func TestCompletionZshOutput(t *testing.T) {
@@ -451,6 +461,7 @@ func TestCompletionZshOutput(t *testing.T) {
 	require.Contains(t, out, "_values 'shell' bash zsh")
 	require.Contains(t, out, "report")
 	require.Contains(t, out, "--no-color")
+	require.Contains(t, out, "public_channel")
 }
 
 func TestReportIncludesArchiveAndShareState(t *testing.T) {

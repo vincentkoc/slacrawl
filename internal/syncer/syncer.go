@@ -38,10 +38,12 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, opts Options) 
 
 func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts Options, tokens config.Tokens) (Summary, error) {
 	summary := Summary{}
+	includeDMs := cfg.IncludeDMsResolved(tokens.User != "")
+	apiClient := slackapi.New(tokens).WithIncludeDMs(includeDMs)
 
 	switch opts.Source {
 	case SourceAPI:
-		return summary, slackapi.New(tokens).Sync(ctx, st, slackapi.SyncOptions{
+		return summary, apiClient.Sync(ctx, st, slackapi.SyncOptions{
 			WorkspaceID: opts.WorkspaceID,
 			Channels:    opts.Channels,
 			Since:       opts.Since,
@@ -52,7 +54,7 @@ func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts
 	case SourceDesktop:
 		return syncDesktop(ctx, cfg, st)
 	case SourceAll:
-		if err := slackapi.New(tokens).Sync(ctx, st, slackapi.SyncOptions{
+		if err := apiClient.Sync(ctx, st, slackapi.SyncOptions{
 			WorkspaceID: opts.WorkspaceID,
 			Channels:    opts.Channels,
 			Since:       opts.Since,

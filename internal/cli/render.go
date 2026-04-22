@@ -619,6 +619,16 @@ func renderDoctorBlock(w *strings.Builder, value any) bool {
 		writeCheck(w, "app tail", truthy(slackAPI["app_tail_available"]), ternary(truthy(slackAPI["app_tail_available"]), "socket mode available", "app token missing"))
 		coverage := shortValue(slackAPI["thread_coverage"])
 		writeCheck(w, "thread coverage", coverage == "full", ternary(coverage == "full", "full historical replies", "partial without user auth"))
+		if truthy(slackAPI["dms_included"]) {
+			missing := shortValue(slackAPI["dms_missing_scope"])
+			if missing == "" {
+				writeCheck(w, "dms and mpims", true, "user token covers DMs and MPIMs")
+			} else {
+				writeCheck(w, "dms and mpims", false, "missing scope: "+missing)
+			}
+		} else {
+			writeCheck(w, "dms and mpims", false, "disabled (set sync.include_dms with a user token)")
+		}
 	}
 	if desktop, ok := report["desktop_source"].(map[string]any); ok {
 		writeCheck(w, "desktop cache", truthy(desktop["available"]), shortValue(desktop["path"]))

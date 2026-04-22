@@ -78,6 +78,20 @@ func TestResolveTokensForWorkspaceUsesImplicitWorkspaceEnvNames(t *testing.T) {
 	require.Equal(t, "xoxp-alpha", tokens.User)
 }
 
+func TestIncludeDMsResolved(t *testing.T) {
+	cfg := Default()
+	require.True(t, cfg.IncludeDMsResolved(true))
+	require.False(t, cfg.IncludeDMsResolved(false))
+
+	enabled := true
+	cfg.Sync.IncludeDMs = &enabled
+	require.True(t, cfg.IncludeDMsResolved(false))
+
+	disabled := false
+	cfg.Sync.IncludeDMs = &disabled
+	require.False(t, cfg.IncludeDMsResolved(true))
+}
+
 func TestSaveAndLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

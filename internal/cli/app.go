@@ -211,7 +211,8 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 	}
 	defer st.Close()
 
-	diag, err := slackapi.New(cfg.ResolveTokens()).Doctor(ctx)
+	tokens := cfg.ResolveTokens()
+	diag, err := slackapi.New(tokens).WithIncludeDMs(cfg.IncludeDMsResolved(tokens.User != "")).Doctor(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
@@ -263,9 +264,9 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 			"bot_enabled":  cfg.Slack.Bot.Enabled,
 			"app_enabled":  cfg.Slack.App.Enabled,
 			"user_enabled": cfg.Slack.User.Enabled,
-			"bot_set":      cfg.ResolveTokens().Bot != "",
-			"app_set":      cfg.ResolveTokens().App != "",
-			"user_set":     cfg.ResolveTokens().User != "",
+			"bot_set":      tokens.Bot != "",
+			"app_set":      tokens.App != "",
+			"user_set":     tokens.User != "",
 		},
 		"slack_api":         diag,
 		"workspace_api":     workspaceAPI,
@@ -493,8 +494,12 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 	fs := flag.NewFlagSet("channels", flag.ContinueOnError)
 	fs.SetOutput(a.Stderr)
 	workspaceID := fs.String("workspace", "", "workspace id")
+	kind := fs.String("kind", "", "channel kind")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *kind != "" && !isValidChannelKind(*kind) {
+		return fmt.Errorf("invalid channel kind %q: use im, mpim, public, private, public_channel, or private_channel", *kind)
 	}
 	query := ""
 	if fs.NArg() > 0 {
@@ -505,7 +510,7 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 		return err
 	}
 	defer st.Close()
-	results, err := st.Channels(ctx, coalesce(*workspaceID, cfg.WorkspaceID), query, 100)
+	results, err := st.ChannelsByKind(ctx, coalesce(*workspaceID, cfg.WorkspaceID), query, *kind, 100)
 	if err != nil {
 		return err
 	}
@@ -732,6 +737,15 @@ func csv(value string) []string {
 	return out
 }
 
+func isValidChannelKind(kind string) bool {
+	switch kind {
+	case "im", "mpim", "public", "private", "public_channel", "private_channel":
+		return true
+	default:
+		return false
+	}
+}
+
 func resolveWorkspaceTargets(cfg config.Config, requested string) []string {
 	if strings.TrimSpace(requested) != "" {
 		return []string{strings.TrimSpace(requested)}
@@ -810,7 +824,7 @@ func (a *App) workspaceDoctorReports(ctx context.Context, cfg config.Config) ([]
 	reports := make([]map[string]any, 0, len(workspaceIDs))
 	for _, workspaceID := range workspaceIDs {
 		tokens := cfg.ResolveTokensForWorkspace(workspaceID)
-		diag, err := slackapi.New(tokens).Doctor(ctx)
+		diag, err := slackapi.New(tokens).WithIncludeDMs(cfg.IncludeDMsResolved(tokens.User != "")).Doctor(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			return nil, fmt.Errorf("doctor %s: %w", workspaceID, err)
 		}
