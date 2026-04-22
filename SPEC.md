@@ -132,6 +132,7 @@ Commands:
 - `channels`
 - `status`
 - `report`
+- `digest`
 
 ### `sync`
 
@@ -183,6 +184,26 @@ Must include:
 - bounded windows for recent message activity
 - top channels, authors, and busiest days
 - git-share freshness state when share mode is enabled
+
+### `digest`
+
+Purpose:
+
+- windowed per-channel activity summary derived from the local store
+
+Expected flags:
+
+- `--since <duration>` lookback window, accepts Go durations (`72h`) or day shorthand (`7d`, `30d`). Default: `7d`.
+- `--workspace <id>`
+- `--channel <id-or-name>`
+- `--top-n <int>` top posters and top mention targets per channel. Default: `1`.
+
+Must include:
+
+- per-channel message count, thread count (parent messages with replies), and active-author count
+- top posters per channel (respects `--top-n`)
+- top mention targets per channel (respects `--top-n`)
+- window totals: messages, threads, channels, active authors
 
 ### `tail`
 

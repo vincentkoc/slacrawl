@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runDoctor(ctx, *configPath, outputFormat)
 	case "report":
 		return a.runReport(ctx, *configPath, outputFormat)
+	case "digest":
+		return a.runDigest(ctx, *configPath, rest[1:], outputFormat)
 	case "publish":
 		return a.runPublish(ctx, *configPath, rest[1:], outputFormat)
 	case "subscribe":
@@ -591,6 +594,67 @@ func (a *App) runWatch(ctx context.Context, configPath string, args []string, fo
 			}
 		}
 	}
+}
+
+func (a *App) runDigest(ctx context.Context, configPath string, args []string, format OutputFormat) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("digest", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	since := fs.String("since", "7d", "lookback window, e.g. 24h, 7d, 30d")
+	workspaceID := fs.String("workspace", "", "workspace id")
+	channel := fs.String("channel", "", "channel id or name")
+	topN := fs.Int("top-n", 1, "number of top posters and mentions per channel")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	lookback, err := parseLookback(*since)
+	if err != nil {
+		return fmt.Errorf("parse --since: %w", err)
+	}
+	st, err := a.openReadableStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	digest, err := report.BuildDigest(ctx, st, report.DigestOptions{
+		Since:       lookback,
+		WorkspaceID: coalesce(*workspaceID, cfg.WorkspaceID),
+		Channel:     *channel,
+		TopN:        *topN,
+	})
+	if err != nil {
+		return err
+	}
+	return a.writeOutput("Digest", digest, format, true)
+}
+
+// parseLookback accepts Go durations (72h) plus the shorthand Nd for N days.
+func parseLookback(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, errors.New("empty duration")
+	}
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		if err != nil {
+			return 0, fmt.Errorf("invalid day count: %w", err)
+		}
+		if days < 0 {
+			return 0, errors.New("negative duration")
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, err
+	}
+	if d < 0 {
+		return 0, errors.New("negative duration")
+	}
+	return d, nil
 }
 
 func (a *App) runReport(ctx context.Context, configPath string, format OutputFormat) error {

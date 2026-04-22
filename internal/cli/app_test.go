@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,83 @@ import (
 	"github.com/vincentkoc/slacrawl/internal/config"
 	"github.com/vincentkoc/slacrawl/internal/store"
 )
+
+func TestParseLookback(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Duration
+		err  bool
+	}{
+		{"7d", 7 * 24 * time.Hour, false},
+		{"1d", 24 * time.Hour, false},
+		{"0d", 0, false},
+		{"72h", 72 * time.Hour, false},
+		{"30m", 30 * time.Minute, false},
+		{"90s", 90 * time.Second, false},
+		{"", 0, true},
+		{"abc", 0, true},
+		{"-2d", 0, true},
+		{"-1h", 0, true},
+	}
+	for _, c := range cases {
+		d, err := parseLookback(c.in)
+		if c.err {
+			require.Error(t, err, "input=%q", c.in)
+			continue
+		}
+		require.NoError(t, err, "input=%q", c.in)
+		require.Equal(t, c.want, d, "input=%q", c.in)
+	}
+}
+
+func TestDigestCommandJSON(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.toml")
+	dbPath := filepath.Join(tmp, "slacrawl.db")
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+	ctx := context.Background()
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "init", "--db", dbPath}))
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	defer st.Close()
+	now := time.Now().UTC()
+	makeTS := func(offset time.Duration, micros int) string {
+		return fmt.Sprintf("%d.%06d", now.Add(-offset).Unix(), micros)
+	}
+	require.NoError(t, st.UpsertWorkspace(ctx, store.Workspace{ID: "T1", Name: "team", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertChannel(ctx, store.Channel{ID: "C1", WorkspaceID: "T1", Name: "engineering", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertUser(ctx, store.User{ID: "U1", WorkspaceID: "T1", Name: "alice", DisplayName: "Alice", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertMessage(ctx, store.Message{
+		ChannelID: "C1", TS: makeTS(1*time.Hour, 100), WorkspaceID: "T1", UserID: "U1",
+		Text: "hello", NormalizedText: "hello", SourceRank: 2, SourceName: "api-bot", RawJSON: "{}",
+		UpdatedAt: now,
+	}, nil))
+	require.NoError(t, st.UpsertMessage(ctx, store.Message{
+		ChannelID: "C1", TS: makeTS(2*time.Hour, 200), WorkspaceID: "T1", UserID: "U1",
+		Text: "world", NormalizedText: "world", SourceRank: 2, SourceName: "api-bot", RawJSON: "{}",
+		UpdatedAt: now,
+	}, nil))
+
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--json", "digest", "--since", "7d"}))
+	var digest map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &digest))
+	require.Equal(t, "7d", digest["window_label"])
+	require.Equal(t, float64(1), digest["top_n"])
+	totals, ok := digest["totals"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(2), totals["messages"])
+	require.Equal(t, float64(1), totals["channels"])
+	channels, ok := digest["channels"].([]any)
+	require.True(t, ok)
+	require.Len(t, channels, 1)
+	row := channels[0].(map[string]any)
+	require.Equal(t, "engineering", row["channel_name"])
+	require.Equal(t, float64(2), row["messages"])
+}
 
 func TestInitStatusAndSQL(t *testing.T) {
 	tmp := t.TempDir()

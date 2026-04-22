@@ -169,6 +169,7 @@ Choose the path that matches your setup:
 - `users` lists synced users
 - `channels` lists synced channels
 - `status` prints workspace and sync status
+- `digest` prints a per-channel activity summary for a time window
 - `completion` prints shell completion for `bash` or `zsh`
 
 ## Output Modes
@@ -308,6 +309,7 @@ go run ./cmd/slacrawl init
 go run ./cmd/slacrawl sync --source api
 go run ./cmd/slacrawl status
 go run ./cmd/slacrawl report
+go run ./cmd/slacrawl digest --since 7d
 go run ./cmd/slacrawl channels
 go run ./cmd/slacrawl messages --channel C12345678 --limit 20
 go run ./cmd/slacrawl mentions --limit 20

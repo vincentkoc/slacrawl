@@ -76,6 +76,7 @@ func (a *App) printHelp() {
 	b.WriteString("  init       Create a starter config.\n")
 	b.WriteString("  doctor     Check config, DB, tokens, and desktop coverage.\n")
 	b.WriteString("  report     Show archive activity and share freshness.\n")
+	b.WriteString("  digest     Per-channel activity summary for a window.\n")
 	b.WriteString("  publish    Export a git-backed archive snapshot.\n")
 	b.WriteString("  subscribe  Configure a git-backed archive reader.\n")
 	b.WriteString("  update     Pull and import the latest git snapshot.\n")
@@ -95,6 +96,7 @@ func (a *App) printHelp() {
 	b.WriteString("  slacrawl init\n")
 	b.WriteString("  slacrawl doctor\n")
 	b.WriteString("  slacrawl report\n")
+	b.WriteString("  slacrawl digest --since 7d\n")
 	b.WriteString("  slacrawl subscribe --db ~/.slacrawl/slacrawl.db https://example.com/private/slacrawl-archive.git\n")
 	b.WriteString("  slacrawl sync --source api --latest-only\n")
 	b.WriteString("  slacrawl search incident\n")
@@ -153,6 +155,8 @@ func renderSpecialBlock(w *strings.Builder, title string, value any) bool {
 		return renderStatusBlock(w, value)
 	case "Report":
 		return renderReportBlock(w, value)
+	case "Digest":
+		return renderDigestBlock(w, value)
 	case "Sync", "Watch":
 		return renderSyncBlock(w, title, value)
 	case "Search":
@@ -809,6 +813,108 @@ func renderReportBlock(w *strings.Builder, value any) bool {
 		renderShareBlock(w, shareState, false)
 	}
 	return true
+}
+
+func renderDigestBlock(w *strings.Builder, value any) bool {
+	digest, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	writeTitle(w, "DIGEST")
+
+	w.WriteString(colorize(ansiGreen, "● Window"))
+	w.WriteByte('\n')
+	label := shortValue(digest["window_label"])
+	since := shortValue(digest["since"])
+	until := shortValue(digest["until"])
+	w.WriteString("  window       ")
+	w.WriteString(label)
+	w.WriteByte('\n')
+	w.WriteString("  range        ")
+	w.WriteString(since)
+	w.WriteString(colorize(ansiDim, " → "))
+	w.WriteString(until)
+	w.WriteByte('\n')
+	if ws := shortValue(digest["workspace"]); ws != "-" {
+		w.WriteString("  workspace    ")
+		w.WriteString(ws)
+		w.WriteByte('\n')
+	}
+	if ch := shortValue(digest["channel"]); ch != "-" {
+		w.WriteString("  channel      ")
+		w.WriteString(ch)
+		w.WriteByte('\n')
+	}
+
+	if totals, ok := digest["totals"].(map[string]any); ok {
+		w.WriteByte('\n')
+		w.WriteString(colorize(ansiCyan, "Totals"))
+		w.WriteByte('\n')
+		writeMetricRow(w, []metric{
+			{"messages", shortValue(totals["messages"]), ansiGreen},
+			{"threads", shortValue(totals["threads"]), ansiGreen},
+			{"channels", shortValue(totals["channels"]), ansiGreen},
+			{"authors", shortValue(totals["active_authors"]), ansiGreen},
+		})
+	}
+
+	channels, _ := digest["channels"].([]any)
+	w.WriteByte('\n')
+	w.WriteString(colorize(ansiCyan, "Channels"))
+	w.WriteByte('\n')
+	if len(channels) == 0 {
+		w.WriteString(colorize(ansiDim, "  no activity in window"))
+		w.WriteByte('\n')
+		return true
+	}
+	for _, item := range channels {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := shortValue(row["channel_name"])
+		if name == "-" {
+			name = shortValue(row["channel_id"])
+		}
+		w.WriteString("  • ")
+		w.WriteString(colorize(ansiBold, name))
+		if kind := shortValue(row["kind"]); kind != "-" && kind != "" {
+			w.WriteString(colorize(ansiDim, " ("+kind+")"))
+		}
+		w.WriteByte('\n')
+		w.WriteString("      messages=")
+		w.WriteString(shortValue(row["messages"]))
+		w.WriteString(" threads=")
+		w.WriteString(shortValue(row["threads"]))
+		w.WriteString(" authors=")
+		w.WriteString(shortValue(row["active_authors"]))
+		w.WriteByte('\n')
+		if posters, ok := row["top_posters"].([]any); ok && len(posters) > 0 {
+			w.WriteString("      top posters  ")
+			w.WriteString(joinRankedCounts(posters))
+			w.WriteByte('\n')
+		}
+		if mentions, ok := row["top_mentions"].([]any); ok && len(mentions) > 0 {
+			w.WriteString("      top mentions ")
+			w.WriteString(joinRankedCounts(mentions))
+			w.WriteByte('\n')
+		}
+	}
+	return true
+}
+
+func joinRankedCounts(items []any) string {
+	var parts []string
+	for _, item := range items {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := shortValue(row["name"])
+		count := shortValue(row["count"])
+		parts = append(parts, fmt.Sprintf("%s (%s)", name, count))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func renderMessageListBlock(w *strings.Builder, title string, value any, includeNormalized bool) bool {
