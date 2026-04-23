@@ -47,6 +47,7 @@ type SyncOptions struct {
 	Full        bool
 	LatestOnly  bool
 	Concurrency int
+	AutoJoin    bool
 }
 
 type Client struct {
@@ -343,12 +344,12 @@ func (c *Client) fetchChannels(ctx context.Context, workspaceID string) ([]slack
 	}
 }
 
-func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, oldest string, now time.Time, userRepliesAvailable bool) error {
+func (c *Client) syncChannelMessages(ctx context.Context, st *store.Store, workspaceID string, channel slack.Channel, oldest string, now time.Time, userRepliesAvailable bool, autoJoin bool) error {
 	return c.syncChannelMessagesWithSource(ctx, st, workspaceID, channel, oldest, now, userRepliesAvailable, channelSyncSource{
 		historyClient: c.bot,
 		sourceName:    SourceBot,
 		sourceRank:    2,
-		allowJoin:     true,
+		allowJoin:     autoJoin,
 	})
 }
 
@@ -743,7 +744,7 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 		historyClient: c.bot,
 		sourceName:    SourceBot,
 		sourceRank:    2,
-		allowJoin:     true,
+		allowJoin:     opts.AutoJoin,
 	})
 }
 
