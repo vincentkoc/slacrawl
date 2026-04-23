@@ -112,16 +112,16 @@ func TestAnalyticsTrendsCommand(t *testing.T) {
 	app, configPath, dbPath, stdout := setupAnalyticsApp(t)
 
 	now := time.Now().UTC()
-	nowBucket := now.Unix() / (7 * 24 * 60 * 60)
+	currentWeekStart := startOfWeekForTest(now)
 	seedCommonWorkspace(t, ctx, dbPath, now)
 
 	st, err := store.Open(dbPath)
 	require.NoError(t, err)
 	require.NoError(t, st.UpsertChannel(ctx, store.Channel{ID: "C2", WorkspaceID: "T1", Name: "beta", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
 
-	seed := func(channelID string, bucket int64, count int) {
+	seed := func(channelID string, weekStart time.Time, count int) {
 		for i := 0; i < count; i++ {
-			ts := fmt.Sprintf("%d.%06d", bucket*(7*24*60*60)+int64(100+i), i+1)
+			ts := fmt.Sprintf("%d.%06d", weekStart.Add(time.Duration(i+1)*time.Hour).Unix(), i+1)
 			require.NoError(t, st.UpsertMessage(ctx, store.Message{
 				ChannelID:      channelID,
 				TS:             ts,
@@ -137,11 +137,11 @@ func TestAnalyticsTrendsCommand(t *testing.T) {
 		}
 	}
 
-	seed("C1", nowBucket-2, 2)
-	seed("C1", nowBucket-1, 1)
-	seed("C1", nowBucket, 1)
-	seed("C2", nowBucket-1, 2)
-	seed("C2", nowBucket, 2)
+	seed("C1", currentWeekStart.AddDate(0, 0, -14), 2)
+	seed("C1", currentWeekStart.AddDate(0, 0, -7), 1)
+	seed("C1", currentWeekStart, 1)
+	seed("C2", currentWeekStart.AddDate(0, 0, -7), 2)
+	seed("C2", currentWeekStart, 2)
 	require.NoError(t, st.Close())
 
 	stdout.Reset()
@@ -165,6 +165,33 @@ func TestAnalyticsTrendsCommand(t *testing.T) {
 	require.Equal(t, float64(2), betaWeekly[2].(map[string]any)["messages"])
 }
 
+func TestAnalyticsTrendsCommandIncludesRequestedQuietChannel(t *testing.T) {
+	ctx := context.Background()
+	app, configPath, dbPath, stdout := setupAnalyticsApp(t)
+
+	now := time.Now().UTC()
+	seedCommonWorkspace(t, ctx, dbPath, now)
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertChannel(ctx, store.Channel{ID: "C2", WorkspaceID: "T1", Name: "quiet", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.Close())
+
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "analytics", "trends", "--workspace", "T1", "--channel", "quiet", "--weeks", "2", "--format", "json"}))
+	var trends map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &trends))
+
+	rows := trends["rows"].([]any)
+	require.Len(t, rows, 1)
+	row := rows[0].(map[string]any)
+	require.Equal(t, "quiet", row["channel_name"])
+	weekly := row["weekly"].([]any)
+	require.Len(t, weekly, 2)
+	require.Equal(t, float64(0), weekly[0].(map[string]any)["messages"])
+	require.Equal(t, float64(0), weekly[1].(map[string]any)["messages"])
+}
+
 func setupAnalyticsApp(t *testing.T) (*App, string, string, *bytes.Buffer) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -184,4 +211,11 @@ func seedCommonWorkspace(t *testing.T, ctx context.Context, dbPath string, now t
 	require.NoError(t, st.UpsertChannel(ctx, store.Channel{ID: "C1", WorkspaceID: "T1", Name: "alpha", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
 	require.NoError(t, st.UpsertUser(ctx, store.User{ID: "U1", WorkspaceID: "T1", Name: "alice", RawJSON: "{}", UpdatedAt: now}))
 	require.NoError(t, st.Close())
+}
+
+func startOfWeekForTest(t time.Time) time.Time {
+	t = t.UTC()
+	dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	offset := (int(dayStart.Weekday()) + 6) % 7
+	return dayStart.AddDate(0, 0, -offset)
 }

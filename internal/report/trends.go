@@ -59,11 +59,10 @@ func BuildTrends(ctx context.Context, s *store.Store, opts TrendsOptions) (Trend
 		weeks = 8
 	}
 
-	untilBucket := now.Unix() / secondsPerWeek
-	sinceBucket := untilBucket - int64(weeks) + 1
-	since := time.Unix(sinceBucket*secondsPerWeek, 0).UTC()
+	currentWeekStart := startOfWeekUTC(now)
+	since := currentWeekStart.AddDate(0, 0, -7*(weeks-1))
 
-	rows, err := trendsRows(ctx, s.DB(), sinceBucket, untilBucket, weeks, opts.WorkspaceID, opts.Channel)
+	rows, err := trendsRows(ctx, s.DB(), since, now, weeks, opts.WorkspaceID, opts.Channel)
 	if err != nil {
 		return Trends{}, err
 	}
@@ -86,7 +85,7 @@ type trendKey struct {
 	kind        string
 }
 
-func trendsRows(ctx context.Context, db *sql.DB, sinceBucket int64, untilBucket int64, weeks int, workspaceID string, channel string) ([]TrendsRow, error) {
+func trendsRows(ctx context.Context, db *sql.DB, since time.Time, until time.Time, weeks int, workspaceID string, channel string) ([]TrendsRow, error) {
 	query := &strings.Builder{}
 	query.WriteString(`
 select
@@ -94,16 +93,15 @@ select
 	m.channel_id,
 	coalesce(nullif(c.name, ''), m.channel_id) as channel_name,
 	coalesce(c.kind, '') as kind,
-	cast(substr(m.ts, 1, instr(m.ts, '.') - 1) as integer) / 604800 as week_bucket,
-	count(*) as messages
+	cast(substr(m.ts, 1, instr(m.ts, '.') - 1) as integer) as ts_epoch
 from messages m
 left join channels c on c.id = m.channel_id and c.workspace_id = m.workspace_id
 where m.ts not like 'draft:%'
   and instr(m.ts, '.') > 0
-  and cast(substr(m.ts, 1, instr(m.ts, '.') - 1) as integer) / 604800 >= ?
-  and cast(substr(m.ts, 1, instr(m.ts, '.') - 1) as integer) / 604800 <= ?
+  and cast(substr(m.ts, 1, instr(m.ts, '.') - 1) as integer) >= ?
+  and cast(substr(m.ts, 1, instr(m.ts, '.') - 1) as integer) <= ?
 `)
-	args := []any{sinceBucket, untilBucket}
+	args := []any{since.Unix(), until.Unix()}
 	if workspaceID != "" {
 		query.WriteString("  and m.workspace_id = ?\n")
 		args = append(args, workspaceID)
@@ -112,9 +110,7 @@ where m.ts not like 'draft:%'
 		query.WriteString("  and (m.channel_id = ? or c.name = ?)\n")
 		args = append(args, channel, channel)
 	}
-	query.WriteString(`group by m.workspace_id, m.channel_id, channel_name, kind, week_bucket
-order by channel_name asc, week_bucket asc
-`)
+	query.WriteString("order by channel_name asc, ts_epoch asc\n")
 
 	rows, err := db.QueryContext(ctx, query.String(), args...)
 	if err != nil {
@@ -124,19 +120,33 @@ order by channel_name asc, week_bucket asc
 
 	countsByChannel := make(map[trendKey]map[int64]int)
 	for rows.Next() {
-		var key trendKey
-		var bucket int64
-		var messages int
-		if err := rows.Scan(&key.workspaceID, &key.channelID, &key.channelName, &key.kind, &bucket, &messages); err != nil {
+		var (
+			key     trendKey
+			tsEpoch int64
+		)
+		if err := rows.Scan(&key.workspaceID, &key.channelID, &key.channelName, &key.kind, &tsEpoch); err != nil {
 			return nil, fmt.Errorf("trends rows scan: %w", err)
 		}
 		if countsByChannel[key] == nil {
 			countsByChannel[key] = make(map[int64]int)
 		}
-		countsByChannel[key][bucket] = messages
+		weekStart := startOfWeekUTC(time.Unix(tsEpoch, 0).UTC())
+		countsByChannel[key][weekStart.Unix()]++
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+
+	if strings.TrimSpace(channel) != "" {
+		matching, err := trendChannels(ctx, db, workspaceID, channel)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range matching {
+			if countsByChannel[key] == nil {
+				countsByChannel[key] = make(map[int64]int)
+			}
+		}
 	}
 
 	keys := make([]trendKey, 0, len(countsByChannel))
@@ -157,10 +167,10 @@ order by channel_name asc, week_bucket asc
 	for _, key := range keys {
 		weekly := make([]WeeklyCount, 0, weeks)
 		for i := 0; i < weeks; i++ {
-			bucket := sinceBucket + int64(i)
+			weekStart := since.AddDate(0, 0, 7*i)
 			weekly = append(weekly, WeeklyCount{
-				WeekStart: time.Unix(bucket*secondsPerWeek, 0).UTC(),
-				Messages:  countsByChannel[key][bucket],
+				WeekStart: weekStart,
+				Messages:  countsByChannel[key][weekStart.Unix()],
 			})
 		}
 		out = append(out, TrendsRow{
@@ -172,4 +182,49 @@ order by channel_name asc, week_bucket asc
 		})
 	}
 	return out, nil
+}
+
+func trendChannels(ctx context.Context, db *sql.DB, workspaceID string, channel string) ([]trendKey, error) {
+	query := &strings.Builder{}
+	query.WriteString(`
+select
+	workspace_id,
+	id,
+	coalesce(nullif(name, ''), id) as channel_name,
+	coalesce(kind, '') as kind
+from channels
+where (id = ? or name = ?)
+`)
+	args := []any{channel, channel}
+	if workspaceID != "" {
+		query.WriteString("  and workspace_id = ?\n")
+		args = append(args, workspaceID)
+	}
+	query.WriteString("order by channel_name asc, workspace_id asc, id asc\n")
+
+	rows, err := db.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("trends channels query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []trendKey
+	for rows.Next() {
+		var key trendKey
+		if err := rows.Scan(&key.workspaceID, &key.channelID, &key.channelName, &key.kind); err != nil {
+			return nil, fmt.Errorf("trends channels scan: %w", err)
+		}
+		out = append(out, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func startOfWeekUTC(t time.Time) time.Time {
+	t = t.UTC()
+	dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	offset := (int(dayStart.Weekday()) + 6) % 7
+	return dayStart.AddDate(0, 0, -offset)
 }
