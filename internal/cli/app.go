@@ -498,7 +498,8 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *kind != "" && !isValidChannelKind(*kind) {
+	resolvedKind := normalizeChannelKind(*kind)
+	if resolvedKind != "" && !isValidChannelKind(resolvedKind) {
 		return fmt.Errorf("invalid channel kind %q: use im, mpim, public, private, public_channel, or private_channel", *kind)
 	}
 	query := ""
@@ -510,7 +511,7 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 		return err
 	}
 	defer st.Close()
-	results, err := st.ChannelsByKind(ctx, coalesce(*workspaceID, cfg.WorkspaceID), query, *kind, 100)
+	results, err := st.ChannelsByKind(ctx, coalesce(*workspaceID, cfg.WorkspaceID), query, resolvedKind, 100)
 	if err != nil {
 		return err
 	}
@@ -739,10 +740,21 @@ func csv(value string) []string {
 
 func isValidChannelKind(kind string) bool {
 	switch kind {
-	case "im", "mpim", "public", "private", "public_channel", "private_channel":
+	case "im", "mpim", "public_channel", "private_channel":
 		return true
 	default:
 		return false
+	}
+}
+
+func normalizeChannelKind(kind string) string {
+	switch strings.TrimSpace(kind) {
+	case "public":
+		return "public_channel"
+	case "private":
+		return "private_channel"
+	default:
+		return strings.TrimSpace(kind)
 	}
 }
 

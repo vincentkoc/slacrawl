@@ -293,6 +293,11 @@ func TestWorkspaceFilteredReadCommands(t *testing.T) {
 	require.Len(t, channels, 1)
 
 	stdout.Reset()
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "--json", "channels", "--workspace", "T1", "--kind", "public"}))
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &channels))
+	require.Len(t, channels, 1)
+
+	stdout.Reset()
 	err = app.Run(context.Background(), []string{"--config", configPath, "--json", "channels", "--workspace", "T1", "--kind", "unknown"})
 	require.ErrorContains(t, err, "invalid channel kind")
 }
