@@ -77,6 +77,7 @@ func (a *App) printHelp() {
 	b.WriteString("  doctor     Check config, DB, tokens, and desktop coverage.\n")
 	b.WriteString("  report     Show archive activity and share freshness.\n")
 	b.WriteString("  digest     Per-channel activity summary for a window.\n")
+	b.WriteString("  analytics  Grouped analytics subcommands.\n")
 	b.WriteString("  publish    Export a git-backed archive snapshot.\n")
 	b.WriteString("  subscribe  Configure a git-backed archive reader.\n")
 	b.WriteString("  update     Pull and import the latest git snapshot.\n")
@@ -98,6 +99,7 @@ func (a *App) printHelp() {
 	b.WriteString("  slacrawl doctor\n")
 	b.WriteString("  slacrawl report\n")
 	b.WriteString("  slacrawl digest --since 7d\n")
+	b.WriteString("  slacrawl analytics trends --weeks 4\n")
 	b.WriteString("  slacrawl subscribe --db ~/.slacrawl/slacrawl.db https://example.com/private/slacrawl-archive.git\n")
 	b.WriteString("  slacrawl sync --source api --latest-only\n")
 	b.WriteString("  slacrawl import ./my-export.zip --workspace T01234567\n")
@@ -159,6 +161,10 @@ func renderSpecialBlock(w *strings.Builder, title string, value any) bool {
 		return renderReportBlock(w, value)
 	case "Digest":
 		return renderDigestBlock(w, value)
+	case "Analytics Quiet":
+		return renderAnalyticsQuietBlock(w, value)
+	case "Analytics Trends":
+		return renderAnalyticsTrendsBlock(w, value)
 	case "Sync", "Watch":
 		return renderSyncBlock(w, title, value)
 	case "Search":
@@ -912,6 +918,133 @@ func renderDigestBlock(w *strings.Builder, value any) bool {
 			w.WriteByte('\n')
 		}
 	}
+	return true
+}
+
+func renderAnalyticsQuietBlock(w *strings.Builder, value any) bool {
+	quiet, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	writeTitle(w, "ANALYTICS QUIET")
+
+	w.WriteString(colorize(ansiGreen, "● Window"))
+	w.WriteByte('\n')
+	w.WriteString("  since        ")
+	w.WriteString(shortValue(quiet["since"]))
+	w.WriteByte('\n')
+	w.WriteString("  until        ")
+	w.WriteString(shortValue(quiet["until"]))
+	w.WriteByte('\n')
+	if ws := shortValue(quiet["workspace"]); ws != "-" {
+		w.WriteString("  workspace    ")
+		w.WriteString(ws)
+		w.WriteByte('\n')
+	}
+
+	if totals, ok := quiet["totals"].(map[string]any); ok {
+		w.WriteByte('\n')
+		w.WriteString(colorize(ansiCyan, "Totals"))
+		w.WriteByte('\n')
+		writeMetricRow(w, []metric{
+			{"channels", shortValue(totals["channels"]), ansiGreen},
+		})
+	}
+
+	channels, _ := quiet["channels"].([]any)
+	w.WriteByte('\n')
+	w.WriteString(colorize(ansiCyan, "Channels"))
+	w.WriteByte('\n')
+	if len(channels) == 0 {
+		w.WriteString(colorize(ansiDim, "  no quiet channels in window"))
+		w.WriteByte('\n')
+		return true
+	}
+	rows := make([]map[string]any, 0, len(channels))
+	for _, item := range channels {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		lastMessage := shortValue(row["last_message"])
+		if lastMessage == "-" {
+			lastMessage = "never"
+		}
+		rows = append(rows, map[string]any{
+			"channel":      shortValue(row["channel_name"]),
+			"kind":         shortValue(row["kind"]),
+			"last_message": lastMessage,
+			"days_silent":  shortValue(row["days_silent"]),
+		})
+	}
+	renderTable(w, rows, 1)
+	return true
+}
+
+func renderAnalyticsTrendsBlock(w *strings.Builder, value any) bool {
+	trends, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	writeTitle(w, "ANALYTICS TRENDS")
+
+	w.WriteString(colorize(ansiGreen, "● Window"))
+	w.WriteByte('\n')
+	w.WriteString("  weeks        ")
+	w.WriteString(shortValue(trends["weeks"]))
+	w.WriteByte('\n')
+	w.WriteString("  since        ")
+	w.WriteString(shortValue(trends["since"]))
+	w.WriteByte('\n')
+	w.WriteString("  until        ")
+	w.WriteString(shortValue(trends["until"]))
+	w.WriteByte('\n')
+	if ws := shortValue(trends["workspace"]); ws != "-" {
+		w.WriteString("  workspace    ")
+		w.WriteString(ws)
+		w.WriteByte('\n')
+	}
+	if ch := shortValue(trends["channel"]); ch != "-" {
+		w.WriteString("  channel      ")
+		w.WriteString(ch)
+		w.WriteByte('\n')
+	}
+
+	rows, _ := trends["rows"].([]any)
+	w.WriteByte('\n')
+	w.WriteString(colorize(ansiCyan, "Weekly counts"))
+	w.WriteByte('\n')
+	if len(rows) == 0 {
+		w.WriteString(colorize(ansiDim, "  no channel activity in window"))
+		w.WriteByte('\n')
+		return true
+	}
+
+	tableRows := make([]map[string]any, 0)
+	for _, item := range rows {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		channelName := shortValue(row["channel_name"])
+		if channelName == "-" {
+			channelName = shortValue(row["channel_id"])
+		}
+		weekly, _ := row["weekly"].([]any)
+		for _, weeklyItem := range weekly {
+			week, ok := weeklyItem.(map[string]any)
+			if !ok {
+				continue
+			}
+			tableRows = append(tableRows, map[string]any{
+				"channel":    channelName,
+				"kind":       shortValue(row["kind"]),
+				"week_start": shortValue(week["week_start"]),
+				"messages":   shortValue(week["messages"]),
+			})
+		}
+	}
+	renderTable(w, tableRows, 1)
 	return true
 }
 

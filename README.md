@@ -135,6 +135,7 @@ go run ./cmd/slacrawl init
 go run ./cmd/slacrawl doctor
 go run ./cmd/slacrawl sync --source api
 go run ./cmd/slacrawl search --workspace T01234567 "incident"
+go run ./cmd/slacrawl analytics trends --weeks 4
 go run ./cmd/slacrawl tail --repair-every 30m
 go run ./cmd/slacrawl watch --desktop-every 5m
 ```
@@ -171,6 +172,7 @@ Choose the path that matches your setup:
 - `channels` lists synced channels
 - `status` prints workspace and sync status
 - `digest` prints a per-channel activity summary for a time window
+- `analytics` groups analytics subcommands (`digest`, `quiet`, `trends`)
 - `completion` prints shell completion for `bash` or `zsh`
 
 ## Importing a Slack Export
@@ -181,6 +183,14 @@ slacrawl import ./extracted-export/ --workspace T01234567 --dry-run
 ```
 
 Set `SLACK_USER_TOKEN` with `im:history`, `mpim:history`, `im:read`, and `mpim:read` scopes to include DMs and MPIMs in API sync.
+
+## Analytics
+
+- `analytics digest [--since 7d] [--workspace X] [--channel C]`
+- `analytics quiet [--since 30d] [--workspace X]`
+- `analytics trends [--weeks 8] [--workspace X] [--channel C]`
+
+Planned follow-ups: `health`, `response-times`, `threads-stale`, `activity`.
 
 ## Output Modes
 
