@@ -158,6 +158,7 @@ Expected flags:
 - `--full`
 - `--latest-only`
 - `--concurrency <n>`
+- `--auto-join=<bool>`
 
 ### `doctor`
 
@@ -271,6 +272,7 @@ Credential model:
 - blank desktop path means auto-detect the supported macOS Slack path
 - optional `[[workspaces]]` entries can override bot/app/user token env vars per workspace
 - workspace token lookup should default to `SLACK_<WORKSPACE_ID>_BOT_TOKEN`, `SLACK_<WORKSPACE_ID>_APP_TOKEN`, and `SLACK_<WORKSPACE_ID>_USER_TOKEN`
+- `[sync].auto_join` defaults to `true` and controls whether API sync attempts to join public channels before retrying history
 
 Share config:
 
@@ -297,7 +299,7 @@ Share config:
    - otherwise reuse the latest stored per-channel timestamp with overlap
 7. fetch users
 8. backfill message history
-9. attempt public-channel join and retry once on `not_in_channel`
+9. when `auto_join` is enabled, attempt public-channel join and retry once on `not_in_channel`
 10. backfill thread replies only when a user token is configured and successfully auths
 11. normalize messages
    - repair malformed UTF-8 before indexing

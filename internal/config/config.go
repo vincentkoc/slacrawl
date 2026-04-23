@@ -60,6 +60,16 @@ type SyncConfig struct {
 	DesktopRefreshEvery string `toml:"desktop_refresh_every"`
 	FullHistory         bool   `toml:"full_history"`
 	IncludeDMs          *bool  `toml:"include_dms"`
+	AutoJoin            *bool  `toml:"auto_join"`
+}
+
+// AutoJoinResolved returns whether the bot should auto-join public channels
+// it encounters during sync. Defaults to true for backwards compatibility.
+func (s SyncConfig) AutoJoinResolved() bool {
+	if s.AutoJoin == nil {
+		return true
+	}
+	return *s.AutoJoin
 }
 
 type SearchConfig struct {

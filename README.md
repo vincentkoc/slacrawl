@@ -149,6 +149,7 @@ Choose the path that matches your setup:
 - use `sync --source api` for normal incremental syncs
 - use `sync --source api --full` only when you want a deliberate full backfill
 - use `sync --source api --latest-only` when you only want fresh deltas on channels that already have local history
+- use `sync --source api --auto-join=false` to skip auto-joining public channels and only sync channels the bot is already a member of
 - use `sync --source desktop` when you want local desktop recovery only
 - use `watch` when you want desktop-local state to refresh into SQLite continuously
 
@@ -385,6 +386,10 @@ Desktop config notes:
 - leave `[slack.desktop].path = ""` to auto-detect the macOS Slack path
 - set a custom absolute path if Slack Desktop data lives elsewhere
 - set `[slack.bot]`, `[slack.app]`, or `[slack.user]` `enabled = false` to ignore that token source entirely
+
+Sync config notes:
+
+- set `[sync].auto_join = false` to disable automatic joining of public channels during sync and only mirror channels the bot can already read
 
 ## Typical Workflow
 
