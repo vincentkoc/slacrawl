@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"sort"
@@ -41,13 +42,14 @@ type Diagnostics struct {
 }
 
 type SyncOptions struct {
-	WorkspaceID string
-	Channels    []string
-	Since       string
-	Full        bool
-	LatestOnly  bool
-	Concurrency int
-	AutoJoin    bool
+	WorkspaceID     string
+	Channels        []string
+	ExcludeChannels []string
+	Since           string
+	Full            bool
+	LatestOnly      bool
+	Concurrency     int
+	AutoJoin        bool
 }
 
 type Client struct {
@@ -181,6 +183,21 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 			}
 		}
 		selectedChannels = append(selectedChannels, channel)
+	}
+	if len(opts.ExcludeChannels) > 0 {
+		excludeSet := make(map[string]struct{}, len(opts.ExcludeChannels))
+		for _, name := range opts.ExcludeChannels {
+			excludeSet[strings.ToLower(name)] = struct{}{}
+		}
+		kept := selectedChannels[:0]
+		for _, channel := range selectedChannels {
+			if _, excluded := excludeSet[strings.ToLower(channel.Name)]; excluded {
+				log.Printf("Skipping excluded channel: #%s", channel.Name)
+				continue
+			}
+			kept = append(kept, channel)
+		}
+		selectedChannels = kept
 	}
 	if err := c.syncChannels(ctx, st, workspaceID, selectedChannels, opts, now, userRepliesAvailable); err != nil {
 		return err
