@@ -41,6 +41,7 @@ repair_every = "30m"
 desktop_refresh_every = "5m"
 full_history = true
 # include_dms = true # requires SLACK_USER_TOKEN with im:history, mpim:history, im:read, mpim:read scopes
+# auto_join = true # auto-join public channels during sync (default: true; set false to only sync already-joined channels)
 
 [search]
 default_mode = "fts"
