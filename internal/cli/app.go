@@ -314,6 +314,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 	source := fs.String("source", "api", "api|desktop|all")
 	workspaceID := fs.String("workspace", "", "workspace id")
 	channels := fs.String("channels", "", "comma separated channel ids")
+	excludeChannels := fs.String("exclude-channels", "", "comma separated channel names to skip during sync")
 	since := fs.String("since", "", "oldest slack ts or RFC3339 timestamp")
 	full := fs.Bool("full", false, "full sync")
 	latestOnly := fs.Bool("latest-only", false, "skip first-time historical backfills")
@@ -323,15 +324,17 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 		return err
 	}
 
+	mergedExclude := mergeStringSlices(cfg.Sync.ExcludeChannels, csv(*excludeChannels))
 	runOptions := syncer.Options{
-		Source:      syncer.Source(*source),
-		WorkspaceID: coalesce(*workspaceID, cfg.WorkspaceID),
-		Channels:    csv(*channels),
-		Since:       *since,
-		Full:        *full,
-		LatestOnly:  *latestOnly,
-		Concurrency: *concurrency,
-		AutoJoin:    *autoJoin,
+		Source:          syncer.Source(*source),
+		WorkspaceID:     coalesce(*workspaceID, cfg.WorkspaceID),
+		Channels:        csv(*channels),
+		ExcludeChannels: mergedExclude,
+		Since:           *since,
+		Full:            *full,
+		LatestOnly:      *latestOnly,
+		Concurrency:     *concurrency,
+		AutoJoin:        *autoJoin,
 	}
 	st, err := a.openStore(cfg)
 	if err != nil {
@@ -868,6 +871,24 @@ func aggregateThreadCoverage(reports []map[string]any) string {
 		}
 	}
 	return "full"
+}
+
+func mergeStringSlices(a, b []string) []string {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, v := range append(a, b...) {
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func coalesce(primary string, fallback string) string {
