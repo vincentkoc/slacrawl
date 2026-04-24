@@ -19,14 +19,15 @@ const (
 )
 
 type Options struct {
-	Source      Source
-	WorkspaceID string
-	Channels    []string
-	Since       string
-	Full        bool
-	LatestOnly  bool
-	Concurrency int
-	AutoJoin    *bool
+	Source          Source
+	WorkspaceID     string
+	Channels        []string
+	ExcludeChannels []string
+	Since           string
+	Full            bool
+	LatestOnly      bool
+	Concurrency     int
+	AutoJoin        *bool
 }
 
 type Summary struct {
@@ -45,25 +46,27 @@ func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts
 	switch opts.Source {
 	case SourceAPI:
 		return summary, apiClient.Sync(ctx, st, slackapi.SyncOptions{
-			WorkspaceID: opts.WorkspaceID,
-			Channels:    opts.Channels,
-			Since:       opts.Since,
-			Full:        opts.Full,
-			LatestOnly:  opts.LatestOnly,
-			Concurrency: opts.Concurrency,
-			AutoJoin:    opts.AutoJoin,
+			WorkspaceID:     opts.WorkspaceID,
+			Channels:        opts.Channels,
+			ExcludeChannels: opts.ExcludeChannels,
+			Since:           opts.Since,
+			Full:            opts.Full,
+			LatestOnly:      opts.LatestOnly,
+			Concurrency:     opts.Concurrency,
+			AutoJoin:        opts.AutoJoin,
 		})
 	case SourceDesktop:
 		return syncDesktop(ctx, cfg, st)
 	case SourceAll:
 		if err := apiClient.Sync(ctx, st, slackapi.SyncOptions{
-			WorkspaceID: opts.WorkspaceID,
-			Channels:    opts.Channels,
-			Since:       opts.Since,
-			Full:        opts.Full,
-			LatestOnly:  opts.LatestOnly,
-			Concurrency: opts.Concurrency,
-			AutoJoin:    opts.AutoJoin,
+			WorkspaceID:     opts.WorkspaceID,
+			Channels:        opts.Channels,
+			ExcludeChannels: opts.ExcludeChannels,
+			Since:           opts.Since,
+			Full:            opts.Full,
+			LatestOnly:      opts.LatestOnly,
+			Concurrency:     opts.Concurrency,
+			AutoJoin:        opts.AutoJoin,
 		}); err != nil {
 			return summary, err
 		}

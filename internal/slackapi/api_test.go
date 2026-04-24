@@ -897,3 +897,64 @@ func TestChannelSyncPlanLatestOnlySkipsUnsyncedChannels(t *testing.T) {
 	require.Contains(t, oldestByChannel, "C123")
 	require.NotContains(t, oldestByChannel, "C999")
 }
+
+func TestSyncSkipsExcludedChannels(t *testing.T) {
+	server := newExcludeChannelSlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot: "xoxb-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	err := client.Sync(context.Background(), st, SyncOptions{ExcludeChannels: []string{" ops-alerts ", "#GENERAL"}})
+	require.NoError(t, err)
+
+	// ops-alerts and general are excluded; only #news should be synced
+	opsRows, err := st.Messages(context.Background(), "", "C111", "", 10)
+	require.NoError(t, err)
+	require.Len(t, opsRows, 0, "ops-alerts should be excluded")
+
+	generalRows, err := st.Messages(context.Background(), "", "C222", "", 10)
+	require.NoError(t, err)
+	require.Len(t, generalRows, 0, "general should be excluded (case-insensitive)")
+
+	newsRows, err := st.Messages(context.Background(), "", "C333", "", 10)
+	require.NoError(t, err)
+	require.Len(t, newsRows, 1, "news should be synced")
+	require.Equal(t, "news message", newsRows[0].Text)
+}
+
+func newExcludeChannelSlackServer(t *testing.T) *mockSlackServer {
+	t.Helper()
+	mock := &mockSlackServer{counts: map[string]int{}, lastOld: map[string]string{}}
+	mock.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/auth.test":
+			_, _ = w.Write([]byte(`{"ok":true,"team":"Test Team","team_id":"T123","user":"bot","user_id":"Ubot","bot_id":"B123"}`))
+		case "/conversations.list":
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[
+				{"id":"C111","name":"ops-alerts","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":false,"topic":{"value":""},"purpose":{"value":""}},
+				{"id":"C222","name":"general","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":true,"topic":{"value":""},"purpose":{"value":""}},
+				{"id":"C333","name":"news","is_channel":true,"is_private":false,"is_archived":false,"is_shared":false,"is_general":false,"topic":{"value":""},"purpose":{"value":""}}
+			],"response_metadata":{"next_cursor":""}}`))
+		case "/conversations.history":
+			values := mustFormValues(r)
+			switch values.Get("channel") {
+			case "C333":
+				_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U123","text":"news message","ts":"1710000000.000100"}],"response_metadata":{"next_cursor":""}}`))
+			default:
+				_, _ = w.Write([]byte(`{"ok":true,"messages":[],"response_metadata":{"next_cursor":""}}`))
+			}
+		case "/users.list":
+			_, _ = w.Write([]byte(`{"ok":true,"members":[],"response_metadata":{"next_cursor":""}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return mock
+}

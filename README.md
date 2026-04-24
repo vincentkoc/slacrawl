@@ -150,6 +150,7 @@ Choose the path that matches your setup:
 - use `sync --source api --full` only when you want a deliberate full backfill
 - use `sync --source api --latest-only` when you only want fresh deltas on channels that already have local history
 - use `sync --source api --auto-join=false` to skip auto-joining public channels and only sync channels the bot is already a member of
+- use `sync --exclude-channels general,random` to skip specific channels by name (case-insensitive; merges with `exclude_channels` in config)
 - use `sync --source desktop` when you want local desktop recovery only
 - use `watch` when you want desktop-local state to refresh into SQLite continuously
 
@@ -390,6 +391,7 @@ Desktop config notes:
 Sync config notes:
 
 - set `[sync].auto_join = false` to disable automatic joining of public channels during sync and only mirror channels the bot can already read
+- set `[sync].exclude_channels = ["general", "random"]` to skip specific channels during sync (case-insensitive matching on channel name)
 
 ## Typical Workflow
 

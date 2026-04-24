@@ -46,6 +46,14 @@ func TestParseLookback(t *testing.T) {
 	}
 }
 
+func TestMergeStringSlicesDedupesCaseInsensitive(t *testing.T) {
+	got := mergeStringSlices(
+		[]string{"general", " Ops-Alerts "},
+		[]string{"#GENERAL", "random", "ops-alerts", ""},
+	)
+	require.Equal(t, []string{"general", "Ops-Alerts", "random"}, got)
+}
+
 func TestDigestCommandJSON(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.toml")

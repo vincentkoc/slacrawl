@@ -154,6 +154,7 @@ Expected flags:
 - `--source api|desktop|all`
 - `--workspace <id>`
 - `--channels <csv>`
+- `--exclude-channels <csv>`
 - `--since <timestamp>`
 - `--full`
 - `--latest-only`
@@ -273,6 +274,7 @@ Credential model:
 - optional `[[workspaces]]` entries can override bot/app/user token env vars per workspace
 - workspace token lookup should default to `SLACK_<WORKSPACE_ID>_BOT_TOKEN`, `SLACK_<WORKSPACE_ID>_APP_TOKEN`, and `SLACK_<WORKSPACE_ID>_USER_TOKEN`
 - `[sync].auto_join` defaults to `true` and controls whether API sync attempts to join public channels before retrying history
+- `[sync].exclude_channels` is an optional case-insensitive list of channel names to skip during API sync and merges with `--exclude-channels`
 
 Share config:
 
@@ -297,18 +299,19 @@ Share config:
    - `--full` disables incremental cutoffs
    - `--latest-only` skips channels that do not already have a stored cursor
    - otherwise reuse the latest stored per-channel timestamp with overlap
-7. fetch users
-8. backfill message history
-9. when `auto_join` is enabled, attempt public-channel join and retry once on `not_in_channel`
-10. backfill thread replies only when a user token is configured and successfully auths
-11. normalize messages
+7. apply any configured or CLI-provided excluded channel-name filters after channel discovery and allow-list filtering
+8. fetch users
+9. backfill message history
+10. when `auto_join` is enabled, attempt public-channel join and retry once on `not_in_channel`
+11. backfill thread replies only when a user token is configured and successfully auths
+12. normalize messages
    - repair malformed UTF-8 before indexing
    - normalize indexed text with NFKC
    - strip zero-width and non-printable control noise
    - collapse odd whitespace for stable FTS / mention extraction
-12. upsert canonical rows
-13. update FTS rows and mentions
-14. write checkpoints, channel skips, and join attempts
+13. upsert canonical rows
+14. update FTS rows and mentions
+15. write checkpoints, channel skips, and join attempts
 
 ### Git share sync
 

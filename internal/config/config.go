@@ -55,12 +55,13 @@ type DesktopConfig struct {
 }
 
 type SyncConfig struct {
-	Concurrency         int    `toml:"concurrency"`
-	RepairEvery         string `toml:"repair_every"`
-	DesktopRefreshEvery string `toml:"desktop_refresh_every"`
-	FullHistory         bool   `toml:"full_history"`
-	IncludeDMs          *bool  `toml:"include_dms"`
-	AutoJoin            *bool  `toml:"auto_join"`
+	Concurrency         int      `toml:"concurrency"`
+	RepairEvery         string   `toml:"repair_every"`
+	DesktopRefreshEvery string   `toml:"desktop_refresh_every"`
+	FullHistory         bool     `toml:"full_history"`
+	IncludeDMs          *bool    `toml:"include_dms"`
+	AutoJoin            *bool    `toml:"auto_join"`
+	ExcludeChannels     []string `toml:"exclude_channels"`
 }
 
 // AutoJoinResolved returns whether the bot should auto-join public channels

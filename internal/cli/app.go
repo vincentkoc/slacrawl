@@ -314,6 +314,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 	source := fs.String("source", "api", "api|desktop|all")
 	workspaceID := fs.String("workspace", "", "workspace id")
 	channels := fs.String("channels", "", "comma separated channel ids")
+	excludeChannels := fs.String("exclude-channels", "", "comma separated channel names to skip during sync")
 	since := fs.String("since", "", "oldest slack ts or RFC3339 timestamp")
 	full := fs.Bool("full", false, "full sync")
 	latestOnly := fs.Bool("latest-only", false, "skip first-time historical backfills")
@@ -327,6 +328,10 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 		Source:      syncer.Source(*source),
 		WorkspaceID: coalesce(*workspaceID, cfg.WorkspaceID),
 		Channels:    csv(*channels),
+		ExcludeChannels: mergeStringSlices(
+			cfg.Sync.ExcludeChannels,
+			csv(*excludeChannels),
+		),
 		Since:       *since,
 		Full:        *full,
 		LatestOnly:  *latestOnly,
@@ -737,6 +742,26 @@ func csv(value string) []string {
 		part = strings.TrimSpace(part)
 		if part != "" {
 			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func mergeStringSlices(values ...[]string) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, list := range values {
+		for _, value := range list {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			key := strings.ToLower(strings.TrimPrefix(value, "#"))
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, value)
 		}
 	}
 	return out

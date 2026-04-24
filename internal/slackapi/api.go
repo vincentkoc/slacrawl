@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"sort"
@@ -41,13 +42,14 @@ type Diagnostics struct {
 }
 
 type SyncOptions struct {
-	WorkspaceID string
-	Channels    []string
-	Since       string
-	Full        bool
-	LatestOnly  bool
-	Concurrency int
-	AutoJoin    *bool
+	WorkspaceID     string
+	Channels        []string
+	ExcludeChannels []string
+	Since           string
+	Full            bool
+	LatestOnly      bool
+	Concurrency     int
+	AutoJoin        *bool
 }
 
 func (o SyncOptions) AutoJoinResolved() bool {
@@ -189,6 +191,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 		}
 		selectedChannels = append(selectedChannels, channel)
 	}
+	selectedChannels = filterExcludedChannels(selectedChannels, opts.ExcludeChannels)
 	if err := c.syncChannels(ctx, st, workspaceID, selectedChannels, opts, now, userRepliesAvailable); err != nil {
 		return err
 	}
@@ -259,6 +262,36 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts SyncOptions) er
 		return err
 	}
 	return st.SetSyncState(ctx, SourceBot, "workspace", workspaceID, now.Format(time.RFC3339))
+}
+
+func filterExcludedChannels(channels []slack.Channel, excludeNames []string) []slack.Channel {
+	if len(channels) == 0 || len(excludeNames) == 0 {
+		return channels
+	}
+	excludeSet := make(map[string]struct{}, len(excludeNames))
+	for _, name := range excludeNames {
+		if key := normalizeChannelName(name); key != "" {
+			excludeSet[key] = struct{}{}
+		}
+	}
+	if len(excludeSet) == 0 {
+		return channels
+	}
+	kept := channels[:0]
+	for _, channel := range channels {
+		if _, excluded := excludeSet[normalizeChannelName(channel.Name)]; excluded {
+			log.Printf("Skipping excluded channel: #%s", channel.Name)
+			continue
+		}
+		kept = append(kept, channel)
+	}
+	return kept
+}
+
+func normalizeChannelName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.TrimPrefix(name, "#")
+	return strings.ToLower(name)
 }
 
 func (c *Client) Tail(ctx context.Context, st *store.Store, workspaceID string, repairEvery time.Duration) error {
