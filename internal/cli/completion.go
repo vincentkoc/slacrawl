@@ -42,12 +42,12 @@ var (
 		"init":       {"--workspace", "--db", "--help", "-h"},
 		"doctor":     {"--help", "-h"},
 		"report":     {"--help", "-h"},
-		"digest":     {"--since", "--workspace", "--channel", "--top-n", "--help", "-h"},
+		"digest":     {"--since", "--workspace", "--channel", "--top-n", "--format", "--json", "--help", "-h"},
 		"analytics":  {"digest", "quiet", "trends", "--help", "-h"},
 		"publish":    {"--repo", "--remote", "--branch", "--message", "--no-commit", "--push", "--help", "-h"},
 		"subscribe":  {"--repo", "--db", "--remote", "--branch", "--stale-after", "--no-auto-update", "--no-import", "--help", "-h"},
 		"update":     {"--repo", "--remote", "--branch", "--help", "-h"},
-		"sync":       {"--source", "--workspace", "--channels", "--since", "--full", "--latest-only", "--concurrency", "--help", "-h"},
+		"sync":       {"--source", "--workspace", "--channels", "--exclude-channels", "--since", "--full", "--latest-only", "--concurrency", "--auto-join", "--help", "-h"},
 		"import":     {"--workspace", "--dry-run", "--force", "--format", "--help", "-h"},
 		"tail":       {"--workspace", "--repair-every", "--help", "-h"},
 		"watch":      {"--desktop-every", "--help", "-h"},
@@ -146,7 +146,7 @@ _slacrawl()
             COMPREPLY=( $(compgen -W "--help -h ${global_flags}" -- "${cur}") )
             ;;
         digest)
-            COMPREPLY=( $(compgen -W "--since --workspace --channel --top-n --help -h ${global_flags}" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--since --workspace --channel --top-n --format --json --help -h ${global_flags}" -- "${cur}") )
             ;;
         analytics)
             local analytics_subcommand=""
@@ -160,7 +160,7 @@ _slacrawl()
             done
             case "${analytics_subcommand}" in
                 digest)
-                    COMPREPLY=( $(compgen -W "--since --workspace --channel --top-n --help -h ${global_flags}" -- "${cur}") )
+                    COMPREPLY=( $(compgen -W "--since --workspace --channel --top-n --format --json --help -h ${global_flags}" -- "${cur}") )
                     ;;
                 quiet)
                     COMPREPLY=( $(compgen -W "--since --workspace --format --json --help -h ${global_flags}" -- "${cur}") )
@@ -183,7 +183,7 @@ _slacrawl()
             COMPREPLY=( $(compgen -W "--repo --remote --branch --help -h ${global_flags}" -- "${cur}") )
             ;;
         sync)
-            COMPREPLY=( $(compgen -W "--source --workspace --channels --since --full --latest-only --concurrency --help -h ${global_flags}" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--source --workspace --channels --exclude-channels --since --full --latest-only --concurrency --auto-join --help -h ${global_flags}" -- "${cur}") )
             ;;
         import)
             COMPREPLY=( $(compgen -W "--workspace --dry-run --force --format --help -h ${global_flags}" -- "${cur}") )
@@ -260,7 +260,7 @@ _slacrawl() {
           _arguments '--help[show help]'
           ;;
         digest)
-          _arguments '--since[lookback window]:duration:' '--workspace[workspace id]:workspace id:' '--channel[channel id or name]:channel:' '--top-n[top posters and mentions per channel]:count:'
+          _arguments '--since[lookback window]:duration:' '--workspace[workspace id]:workspace id:' '--channel[channel id or name]:channel:' '--top-n[top posters and mentions per channel]:count:' '--format[output format]:format:(text json log)' '--json[json output]'
           ;;
         analytics)
           if (( CURRENT == 3 )); then
@@ -268,7 +268,7 @@ _slacrawl() {
           else
             case $words[3] in
               digest)
-                _arguments '--since[lookback window]:duration:' '--workspace[workspace id]:workspace id:' '--channel[channel id or name]:channel:' '--top-n[top posters and mentions per channel]:count:'
+                _arguments '--since[lookback window]:duration:' '--workspace[workspace id]:workspace id:' '--channel[channel id or name]:channel:' '--top-n[top posters and mentions per channel]:count:' '--format[output format]:format:(text json log)' '--json[json output]'
                 ;;
               quiet)
                 _arguments '--since[lookback window]:duration:' '--workspace[workspace id]:workspace id:' '--format[output format]:format:(text json log)' '--json[json output]'
@@ -292,7 +292,7 @@ _slacrawl() {
           _arguments '--repo[local clone path]:path:_files' '--remote[git remote]:remote:' '--branch[git branch]:branch:'
           ;;
         sync)
-          _arguments '--source[sync source]:source:(api desktop all)' '--workspace[workspace id]:workspace id:' '--channels[channel ids]:channels:' '--since[start timestamp]:timestamp:' '--full[run full sync]' '--latest-only[skip first-time historical backfills]' '--concurrency[worker count]:count:'
+          _arguments '--source[sync source]:source:(api desktop all)' '--workspace[workspace id]:workspace id:' '--channels[channel ids]:channels:' '--exclude-channels[channel names]:channels:' '--since[start timestamp]:timestamp:' '--full[run full sync]' '--latest-only[skip first-time historical backfills]' '--concurrency[worker count]:count:' '--auto-join[auto-join public channels]:bool:(true false)'
           ;;
         import)
           _arguments '--workspace[workspace id]:workspace id:' '--dry-run[walk and count without writing]' '--force[overwrite existing slack-export rows at the same rank]' '--format[output format]:format:(text json log)'

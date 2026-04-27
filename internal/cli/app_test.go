@@ -54,6 +54,17 @@ func TestMergeStringSlicesDedupesCaseInsensitive(t *testing.T) {
 	require.Equal(t, []string{"general", "Ops-Alerts", "random"}, got)
 }
 
+func TestStatusHelpDoesNotReadStore(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "missing.toml")
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "status", "--help"}))
+	require.Contains(t, stdout.String(), "Usage of status:")
+	require.NotContains(t, stdout.String(), "STATUS")
+}
+
 func TestDigestCommandJSON(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.toml")
@@ -457,6 +468,8 @@ func TestCompletionBashOutput(t *testing.T) {
 	require.Contains(t, out, "completion")
 	require.Contains(t, out, "report")
 	require.Contains(t, out, "--format")
+	require.Contains(t, out, "--exclude-channels")
+	require.Contains(t, out, "--auto-join")
 	require.Contains(t, out, "--kind")
 }
 
@@ -474,6 +487,8 @@ func TestCompletionZshOutput(t *testing.T) {
 	require.Contains(t, out, "_values 'shell' bash zsh")
 	require.Contains(t, out, "report")
 	require.Contains(t, out, "--no-color")
+	require.Contains(t, out, "--exclude-channels")
+	require.Contains(t, out, "--auto-join")
 	require.Contains(t, out, "public_channel")
 }
 

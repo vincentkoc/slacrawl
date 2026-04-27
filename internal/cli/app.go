@@ -103,7 +103,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	case "update":
 		return a.runUpdate(ctx, *configPath, rest[1:], outputFormat)
 	case "status":
-		return a.runStatus(ctx, *configPath, outputFormat)
+		return a.runStatus(ctx, *configPath, rest[1:], outputFormat)
 	case "sync":
 		return a.runSync(ctx, *configPath, rest[1:], outputFormat)
 	case "import":
@@ -282,7 +282,15 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 	return a.writeOutput("Doctor", report, format, true)
 }
 
-func (a *App) runStatus(ctx context.Context, configPath string, format OutputFormat) error {
+func (a *App) runStatus(ctx context.Context, configPath string, args []string, format OutputFormat) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return err
@@ -629,12 +637,18 @@ func (a *App) runDigest(ctx context.Context, configPath string, args []string, f
 	workspaceID := fs.String("workspace", "", "workspace id")
 	channel := fs.String("channel", "", "channel id or name")
 	topN := fs.Int("top-n", 1, "number of top posters and mentions per channel")
+	formatFlag := fs.String("format", string(format), "output format: text|json|log")
+	jsonOut := fs.Bool("json", false, "json output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	lookback, err := parseLookback(*since)
 	if err != nil {
 		return fmt.Errorf("parse --since: %w", err)
+	}
+	outputFormat, err := resolveOutputFormat(*formatFlag, *jsonOut)
+	if err != nil {
+		return err
 	}
 	st, err := a.openReadableStore(ctx, cfg)
 	if err != nil {
@@ -650,7 +664,7 @@ func (a *App) runDigest(ctx context.Context, configPath string, args []string, f
 	if err != nil {
 		return err
 	}
-	return a.writeOutput("Digest", digest, format, true)
+	return a.writeOutput("Digest", digest, outputFormat, true)
 }
 
 // parseLookback accepts Go durations (72h) plus the shorthand Nd for N days.

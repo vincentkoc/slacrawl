@@ -51,6 +51,11 @@ func TestAnalyticsDigestCommand(t *testing.T) {
 	require.Equal(t, digest["top_n"], analyticsDigest["top_n"])
 	require.Equal(t, digest["totals"], analyticsDigest["totals"])
 	require.Equal(t, digest["channels"], analyticsDigest["channels"])
+
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "analytics", "digest", "--since", "7d", "--workspace", "T1", "--format", "json"}))
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &analyticsDigest))
+	require.Equal(t, digest["totals"], analyticsDigest["totals"])
 }
 
 func TestAnalyticsQuietCommand(t *testing.T) {
