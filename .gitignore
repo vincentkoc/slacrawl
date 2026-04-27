@@ -1,6 +1,8 @@
 bin/
 dist/
 slacrawl
+!.agents/skills/slacrawl/
+!.agents/skills/slacrawl/**
 *.test
 *.out
 .DS_Store
