@@ -318,6 +318,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 	full := fs.Bool("full", false, "full sync")
 	latestOnly := fs.Bool("latest-only", false, "skip first-time historical backfills")
 	concurrency := fs.Int("concurrency", cfg.Sync.Concurrency, "worker count")
+	autoJoin := fs.Bool("auto-join", cfg.Sync.AutoJoinResolved(), "auto-join public channels during sync")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -330,6 +331,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 		Full:        *full,
 		LatestOnly:  *latestOnly,
 		Concurrency: *concurrency,
+		AutoJoin:    boolPtr(*autoJoin),
 	}
 	st, err := a.openStore(cfg)
 	if err != nil {
@@ -738,6 +740,10 @@ func csv(value string) []string {
 		}
 	}
 	return out
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func isValidChannelKind(kind string) bool {

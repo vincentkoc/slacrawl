@@ -293,6 +293,30 @@ func TestSyncJoinsPublicChannelBeforeRetryingHistory(t *testing.T) {
 	require.Equal(t, "joined", joinState)
 }
 
+func TestSyncSkipsJoinWhenAutoJoinDisabled(t *testing.T) {
+	server := newJoinRetrySlackServer(t)
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{
+		Bot: "xoxb-test",
+	}, server.URL()+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	st := mustStore(t)
+	defer st.Close()
+
+	err := client.Sync(context.Background(), st, SyncOptions{AutoJoin: testBoolPtr(false)})
+	require.NoError(t, err)
+
+	rows, err := st.Messages(context.Background(), "", "C111", "", 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 0, "should not have joined or synced the channel")
+}
+
+func testBoolPtr(value bool) *bool {
+	return &value
+}
+
 func TestSyncDefaultsToIncrementalHistoryWhenNotFull(t *testing.T) {
 	server := newRepairSlackServer(t)
 	defer server.Close()

@@ -26,6 +26,7 @@ type Options struct {
 	Full        bool
 	LatestOnly  bool
 	Concurrency int
+	AutoJoin    *bool
 }
 
 type Summary struct {
@@ -50,6 +51,7 @@ func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts
 			Full:        opts.Full,
 			LatestOnly:  opts.LatestOnly,
 			Concurrency: opts.Concurrency,
+			AutoJoin:    opts.AutoJoin,
 		})
 	case SourceDesktop:
 		return syncDesktop(ctx, cfg, st)
@@ -61,6 +63,7 @@ func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts
 			Full:        opts.Full,
 			LatestOnly:  opts.LatestOnly,
 			Concurrency: opts.Concurrency,
+			AutoJoin:    opts.AutoJoin,
 		}); err != nil {
 			return summary, err
 		}
