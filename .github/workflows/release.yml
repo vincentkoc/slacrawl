@@ -7,9 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Existing release tag to publish (for example: v0.1.0)"
+        description: "Release tag to publish or validate (for example: v0.1.0)"
         required: true
         type: string
+      skip_publish:
+        description: "Build and validate the release without publishing assets, packages, or tap updates"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -17,6 +22,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_SKIP_PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_publish && '1' || '0' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -33,12 +40,38 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Guard manual release rerun
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.skip_publish }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>/dev/null || true)"
+          asset_count="0"
+          if [ -n "${release_json}" ]; then
+            asset_count="$(printf '%s' "${release_json}" | jq -r '(.assets // []) | length')"
+          fi
+          if [ "${asset_count}" != "0" ]; then
+            echo "::error::Release ${RELEASE_TAG} already has ${asset_count} assets. Delete existing assets before republishing, or rerun with skip_publish=true to validate only."
+            exit 1
+          fi
+
+      - name: Configure GoReleaser
+        run: |
+          set -euo pipefail
+          args="release --clean"
+          if [ "${RELEASE_SKIP_PUBLISH}" = "1" ]; then
+            args="${args} --skip=publish"
+          fi
+          echo "GORELEASER_ARGS=${args}" >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: ${{ env.GORELEASER_ARGS }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -57,14 +90,14 @@ jobs:
           fi
 
       - name: Install Cloudsmith CLI
-        if: ${{ env.CLOUDSMITH_ENABLED == '1' }}
+        if: ${{ env.CLOUDSMITH_ENABLED == '1' && env.RELEASE_SKIP_PUBLISH != '1' }}
         run: |
           set -euo pipefail
           python3 -m pip install --upgrade pip
           python3 -m pip install cloudsmith-cli
 
       - name: Publish APT packages to Cloudsmith
-        if: ${{ env.CLOUDSMITH_ENABLED == '1' }}
+        if: ${{ env.CLOUDSMITH_ENABLED == '1' && env.RELEASE_SKIP_PUBLISH != '1' }}
         env:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CLOUDSMITH_REPO: ${{ env.CLOUDSMITH_REPO_EFFECTIVE }}
@@ -92,7 +125,7 @@ jobs:
           done
 
       - name: Publish RPM packages to Cloudsmith
-        if: ${{ env.CLOUDSMITH_ENABLED == '1' }}
+        if: ${{ env.CLOUDSMITH_ENABLED == '1' && env.RELEASE_SKIP_PUBLISH != '1' }}
         env:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CLOUDSMITH_REPO: ${{ env.CLOUDSMITH_REPO_EFFECTIVE }}
@@ -110,6 +143,7 @@ jobs:
 
   update-homebrew-tap:
     needs: release
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.skip_publish }}
     uses: ./.github/workflows/homebrew-tap.yml
     with:
       tag_name: ${{ inputs.tag_name || github.ref_name }}
