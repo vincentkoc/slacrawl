@@ -280,7 +280,7 @@ func TestSyncJoinsPublicChannelBeforeRetryingHistory(t *testing.T) {
 	st := mustStore(t)
 	defer st.Close()
 
-	err := client.Sync(context.Background(), st, SyncOptions{AutoJoin: true})
+	err := client.Sync(context.Background(), st, SyncOptions{})
 	require.NoError(t, err)
 
 	rows, err := st.Messages(context.Background(), "", "C111", "", 10)
@@ -305,12 +305,16 @@ func TestSyncSkipsJoinWhenAutoJoinDisabled(t *testing.T) {
 	st := mustStore(t)
 	defer st.Close()
 
-	err := client.Sync(context.Background(), st, SyncOptions{AutoJoin: false})
+	err := client.Sync(context.Background(), st, SyncOptions{AutoJoin: testBoolPtr(false)})
 	require.NoError(t, err)
 
 	rows, err := st.Messages(context.Background(), "", "C111", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 0, "should not have joined or synced the channel")
+}
+
+func testBoolPtr(value bool) *bool {
+	return &value
 }
 
 func TestSyncDefaultsToIncrementalHistoryWhenNotFull(t *testing.T) {

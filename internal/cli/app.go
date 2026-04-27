@@ -331,7 +331,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 		Full:        *full,
 		LatestOnly:  *latestOnly,
 		Concurrency: *concurrency,
-		AutoJoin:    *autoJoin,
+		AutoJoin:    boolPtr(*autoJoin),
 	}
 	st, err := a.openStore(cfg)
 	if err != nil {
@@ -740,6 +740,10 @@ func csv(value string) []string {
 		}
 	}
 	return out
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func isValidChannelKind(kind string) bool {

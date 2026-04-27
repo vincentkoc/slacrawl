@@ -47,7 +47,14 @@ type SyncOptions struct {
 	Full        bool
 	LatestOnly  bool
 	Concurrency int
-	AutoJoin    bool
+	AutoJoin    *bool
+}
+
+func (o SyncOptions) AutoJoinResolved() bool {
+	if o.AutoJoin == nil {
+		return true
+	}
+	return *o.AutoJoin
 }
 
 type Client struct {
@@ -744,7 +751,7 @@ func (c *Client) syncChannels(ctx context.Context, st *store.Store, workspaceID 
 		historyClient: c.bot,
 		sourceName:    SourceBot,
 		sourceRank:    2,
-		allowJoin:     opts.AutoJoin,
+		allowJoin:     opts.AutoJoinResolved(),
 	})
 }
 

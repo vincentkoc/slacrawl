@@ -26,7 +26,7 @@ type Options struct {
 	Full        bool
 	LatestOnly  bool
 	Concurrency int
-	AutoJoin    bool
+	AutoJoin    *bool
 }
 
 type Summary struct {
