@@ -132,7 +132,9 @@ func TestInitStatusAndSQL(t *testing.T) {
 	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--json", "status"}))
 	var status map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &status))
-	require.Equal(t, float64(0), status["messages"])
+	require.Equal(t, "crawlkit.control.v1", status["schema_version"])
+	require.Equal(t, float64(0), statusCount(t, status, "messages"))
+	require.NotEmpty(t, status["databases"])
 
 	stdout.Reset()
 	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--json", "sql", "select count(*) as messages from messages"}))
@@ -145,7 +147,24 @@ func TestInitStatusAndSQL(t *testing.T) {
 	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--format", "json", "status"}))
 	var statusByFormat map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &statusByFormat))
-	require.Equal(t, float64(0), statusByFormat["messages"])
+	require.Equal(t, float64(0), statusCount(t, statusByFormat, "messages"))
+}
+
+func statusCount(t *testing.T, status map[string]any, id string) float64 {
+	t.Helper()
+	counts, ok := status["counts"].([]any)
+	require.True(t, ok)
+	for _, raw := range counts {
+		row, ok := raw.(map[string]any)
+		require.True(t, ok)
+		if row["id"] == id {
+			value, ok := row["value"].(float64)
+			require.True(t, ok)
+			return value
+		}
+	}
+	require.Failf(t, "missing status count", "id %q", id)
+	return 0
 }
 
 func TestDoctorReflectsDisabledSources(t *testing.T) {

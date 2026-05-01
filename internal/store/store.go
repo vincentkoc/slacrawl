@@ -278,6 +278,24 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+func OpenReadOnly(path string) (*Store, error) {
+	base, err := crawlstore.OpenReadOnly(context.Background(), path)
+	if err != nil {
+		return nil, err
+	}
+	db := base.DB()
+	currentVersion, err := readSchemaVersion(db)
+	if err != nil {
+		_ = base.Close()
+		return nil, err
+	}
+	if currentVersion > schemaVersion {
+		_ = base.Close()
+		return nil, fmt.Errorf("database schema version %d is newer than this slacrawl build supports (%d)", currentVersion, schemaVersion)
+	}
+	return &Store{db: db}, nil
+}
+
 func (s *Store) DB() *sql.DB {
 	if s == nil {
 		return nil
