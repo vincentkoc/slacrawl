@@ -23,12 +23,20 @@ jobs:
         run: go test ./...
 
       - name: Build CLI
-        run: go build ./cmd/slacrawl
+        run: go build -o bin/slacrawl ./cmd/slacrawl
 
-      - name: Smoke test CLI help
+      - name: Smoke test CLI control surface
         run: |
           set -euo pipefail
-          output="$(go run ./cmd/slacrawl --help 2>&1 || true)"
+          output="$(./bin/slacrawl --help 2>&1 || true)"
           printf '%s\n' "$output"
           printf '%s' "$output" | grep -q "Usage of slacrawl:"
+          printf '%s' "$output" | grep -q "metadata"
           printf '%s' "$output" | grep -q "tui"
+          test -n "$(./bin/slacrawl --version)"
+          ./bin/slacrawl metadata --json | grep -q '"schema_version"'
+          cfg="$RUNNER_TEMP/slacrawl.toml"
+          db="$RUNNER_TEMP/slacrawl.db"
+          ./bin/slacrawl --config "$cfg" init --db "$db"
+          ./bin/slacrawl --config "$cfg" status --json | grep -q '"databases"'
+          ./bin/slacrawl --config "$cfg" tui --json --limit 1 | grep -q '^\['
