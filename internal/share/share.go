@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vincentkoc/crawlkit/gitshare"
+	"github.com/vincentkoc/crawlkit/pack"
 	"github.com/vincentkoc/slacrawl/internal/store"
 )
 
@@ -30,7 +31,7 @@ const (
 	defaultMaxShardBytes int64 = 40 * 1024 * 1024
 )
 
-var ErrNoManifest = errors.New("share manifest not found")
+var ErrNoManifest = pack.ErrNoManifest
 
 var maxShardBytes = defaultMaxShardBytes
 
@@ -51,20 +52,9 @@ type Options struct {
 	Branch   string
 }
 
-type Manifest struct {
-	Version     int               `json:"version"`
-	GeneratedAt time.Time         `json:"generated_at"`
-	Tables      []TableManifest   `json:"tables"`
-	Files       map[string]string `json:"files,omitempty"`
-}
+type Manifest = pack.Manifest
 
-type TableManifest struct {
-	Name    string   `json:"name"`
-	File    string   `json:"file,omitempty"`
-	Files   []string `json:"files,omitempty"`
-	Columns []string `json:"columns"`
-	Rows    int      `json:"rows"`
-}
+type TableManifest = pack.TableManifest
 
 type SyncState struct {
 	LastImportAt            time.Time `json:"last_import_at"`
@@ -72,165 +62,30 @@ type SyncState struct {
 }
 
 func EnsureRepo(ctx context.Context, opts Options) error {
-	if strings.TrimSpace(opts.RepoPath) == "" {
-		return errors.New("share repo path is empty")
-	}
-	if _, err := os.Stat(filepath.Join(opts.RepoPath, ".git")); err == nil {
-		return nil
-	}
-	if strings.TrimSpace(opts.Remote) != "" {
-		if err := os.MkdirAll(filepath.Dir(opts.RepoPath), 0o755); err != nil {
-			return fmt.Errorf("mkdir share parent: %w", err)
-		}
-		if err := run(ctx, "", "git", "clone", opts.Remote, opts.RepoPath); err != nil {
-			return err
-		}
-		if branch := normalizeBranch(opts.Branch); branch != "" {
-			if err := run(ctx, opts.RepoPath, "git", "checkout", "-B", branch); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := os.MkdirAll(opts.RepoPath, 0o755); err != nil {
-		return fmt.Errorf("mkdir share repo: %w", err)
-	}
-	if err := run(ctx, opts.RepoPath, "git", "init"); err != nil {
-		return err
-	}
-	if branch := normalizeBranch(opts.Branch); branch != "" {
-		if err := run(ctx, opts.RepoPath, "git", "checkout", "-B", branch); err != nil {
-			return err
-		}
-	}
-	return nil
+	return gitshare.EnsureRepo(ctx, gitshareOptions(opts))
 }
 
 func Pull(ctx context.Context, opts Options) error {
-	if strings.TrimSpace(opts.Remote) == "" {
-		return EnsureRepo(ctx, opts)
-	}
-	if err := EnsureRepo(ctx, opts); err != nil {
-		return err
-	}
-	if err := run(ctx, opts.RepoPath, "git", "fetch", "--prune", "origin"); err != nil {
-		return err
-	}
-	branch := normalizeBranch(opts.Branch)
-	remoteRef := "refs/remotes/origin/" + branch
-	if _, err := output(ctx, opts.RepoPath, "git", "rev-parse", "--verify", remoteRef); err != nil {
-		return run(ctx, opts.RepoPath, "git", "checkout", "-B", branch)
-	}
-	return run(ctx, opts.RepoPath, "git", "checkout", "-B", branch, "origin/"+branch)
+	return gitshare.Pull(ctx, gitshareOptions(opts))
 }
 
 func Commit(ctx context.Context, opts Options, message string) (bool, error) {
-	if err := run(ctx, opts.RepoPath, "git", "add", "."); err != nil {
-		return false, err
-	}
-	out, err := output(ctx, opts.RepoPath, "git", "status", "--porcelain")
-	if err != nil {
-		return false, err
-	}
-	if strings.TrimSpace(out) == "" {
-		return false, nil
-	}
-	if strings.TrimSpace(message) == "" {
-		message = "sync: slack archive"
-	}
-	if err := run(ctx, opts.RepoPath, "git",
-		"-c", "commit.gpgsign=false",
-		"-c", "user.name=slacrawl",
-		"-c", "user.email=slacrawl@example.invalid",
-		"commit", "-m", message,
-	); err != nil {
-		return false, err
-	}
-	return true, nil
+	return gitshare.Commit(ctx, gitshareOptions(opts), message)
 }
 
 func Push(ctx context.Context, opts Options) error {
-	branch := normalizeBranch(opts.Branch)
-	out, err := output(ctx, opts.RepoPath, "git", "push", "-u", "origin", branch)
-	if err == nil {
-		return nil
-	}
-	if !isNonFastForwardPush(out) {
-		return fmt.Errorf("git push -u origin %s: %w\n%s", branch, err, strings.TrimSpace(out))
-	}
-	if pullErr := run(ctx, opts.RepoPath, "git", "pull", "--rebase", "--autostash", "origin", branch); pullErr != nil {
-		return fmt.Errorf("rebase before push retry: %w", pullErr)
-	}
-	return run(ctx, opts.RepoPath, "git", "push", "-u", "origin", branch)
+	return gitshare.Push(ctx, gitshareOptions(opts))
 }
 
 func Export(ctx context.Context, s *store.Store, opts Options) (Manifest, error) {
-	if err := EnsureRepo(ctx, opts); err != nil {
-		return Manifest{}, err
-	}
-	dataDir := filepath.Join(opts.RepoPath, "tables")
-	if err := os.RemoveAll(dataDir); err != nil {
-		return Manifest{}, fmt.Errorf("reset tables dir: %w", err)
-	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return Manifest{}, fmt.Errorf("mkdir tables dir: %w", err)
-	}
-	manifest := Manifest{
-		Version:     1,
-		GeneratedAt: time.Now().UTC(),
-		Files:       map[string]string{"manifest": ManifestName},
-	}
-	for _, table := range SnapshotTables {
-		entry, err := exportTable(ctx, s.DB(), dataDir, table)
-		if err != nil {
-			return Manifest{}, err
-		}
-		manifest.Tables = append(manifest.Tables, entry)
-	}
-	body, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return Manifest{}, err
-	}
-	body = append(body, '\n')
-	if err := os.WriteFile(filepath.Join(opts.RepoPath, ManifestName), body, 0o600); err != nil {
-		return Manifest{}, fmt.Errorf("write manifest: %w", err)
-	}
-	return manifest, nil
+	return pack.Export(ctx, pack.ExportOptions{DB: s.DB(), RootDir: opts.RepoPath, Tables: SnapshotTables})
 }
 
 func Import(ctx context.Context, s *store.Store, opts Options) (Manifest, error) {
-	manifest, err := ReadManifest(opts.RepoPath)
+	manifest, err := pack.Import(ctx, pack.ImportOptions{DB: s.DB(), RootDir: opts.RepoPath, DeleteTables: SnapshotTables})
 	if err != nil {
 		return Manifest{}, err
 	}
-	tx, err := s.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return Manifest{}, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-	if _, err := tx.ExecContext(ctx, `delete from message_fts`); err != nil {
-		return Manifest{}, fmt.Errorf("clear message_fts: %w", err)
-	}
-	for i := len(SnapshotTables) - 1; i >= 0; i-- {
-		table := SnapshotTables[i]
-		if _, err := tx.ExecContext(ctx, "delete from "+quoteIdent(table)); err != nil {
-			return Manifest{}, fmt.Errorf("clear %s: %w", table, err)
-		}
-	}
-	for _, table := range manifest.Tables {
-		if err := importTable(ctx, tx, opts.RepoPath, table); err != nil {
-			return Manifest{}, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return Manifest{}, err
-	}
-	committed = true
 	if err := s.RebuildSearchIndexes(ctx); err != nil {
 		return Manifest{}, err
 	}
@@ -241,7 +96,7 @@ func Import(ctx context.Context, s *store.Store, opts Options) (Manifest, error)
 }
 
 func ImportIfChanged(ctx context.Context, s *store.Store, opts Options) (Manifest, bool, error) {
-	manifest, err := ReadManifest(opts.RepoPath)
+	manifest, err := pack.ReadManifest(opts.RepoPath)
 	if err != nil {
 		return Manifest{}, false, err
 	}
@@ -312,21 +167,18 @@ func ReadSyncState(ctx context.Context, s *store.Store) (SyncState, error) {
 }
 
 func ReadManifest(repoPath string) (Manifest, error) {
-	data, err := os.ReadFile(filepath.Join(repoPath, ManifestName))
+	manifest, err := pack.ReadManifest(repoPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return Manifest{}, ErrNoManifest
-		}
-		return Manifest{}, fmt.Errorf("read share manifest: %w", err)
-	}
-	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return Manifest{}, fmt.Errorf("parse share manifest: %w", err)
+		return Manifest{}, err
 	}
 	if manifest.Version != 1 {
 		return Manifest{}, fmt.Errorf("unsupported share manifest version %d", manifest.Version)
 	}
 	return manifest, nil
+}
+
+func gitshareOptions(opts Options) gitshare.Options {
+	return gitshare.Options{RepoPath: opts.RepoPath, Remote: opts.Remote, Branch: normalizeBranch(opts.Branch)}
 }
 
 func exportTable(ctx context.Context, db *sql.DB, dataDir, table string) (TableManifest, error) {
