@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vincentkoc/crawlkit/gitshare"
-	"github.com/vincentkoc/crawlkit/pack"
+	"github.com/vincentkoc/crawlkit/mirror"
+	"github.com/vincentkoc/crawlkit/snapshot"
 	"github.com/vincentkoc/slacrawl/internal/store"
 )
 
@@ -31,7 +31,7 @@ const (
 	defaultMaxShardBytes int64 = 40 * 1024 * 1024
 )
 
-var ErrNoManifest = pack.ErrNoManifest
+var ErrNoManifest = snapshot.ErrNoManifest
 
 var maxShardBytes = defaultMaxShardBytes
 
@@ -52,9 +52,9 @@ type Options struct {
 	Branch   string
 }
 
-type Manifest = pack.Manifest
+type Manifest = snapshot.Manifest
 
-type TableManifest = pack.TableManifest
+type TableManifest = snapshot.TableManifest
 
 type SyncState struct {
 	LastImportAt            time.Time `json:"last_import_at"`
@@ -62,30 +62,30 @@ type SyncState struct {
 }
 
 func EnsureRepo(ctx context.Context, opts Options) error {
-	return gitshare.EnsureRepo(ctx, gitshareOptions(opts))
+	return mirror.EnsureRepo(ctx, mirrorOptions(opts))
 }
 
 func Pull(ctx context.Context, opts Options) error {
-	return gitshare.Pull(ctx, gitshareOptions(opts))
+	return mirror.Pull(ctx, mirrorOptions(opts))
 }
 
 func Commit(ctx context.Context, opts Options, message string) (bool, error) {
-	return gitshare.Commit(ctx, gitshareOptions(opts), message)
+	return mirror.Commit(ctx, mirrorOptions(opts), message)
 }
 
 func Push(ctx context.Context, opts Options) error {
-	return gitshare.Push(ctx, gitshareOptions(opts))
+	return mirror.Push(ctx, mirrorOptions(opts))
 }
 
 func Export(ctx context.Context, s *store.Store, opts Options) (Manifest, error) {
 	if err := EnsureRepo(ctx, opts); err != nil {
 		return Manifest{}, err
 	}
-	return pack.Export(ctx, pack.ExportOptions{DB: s.DB(), RootDir: opts.RepoPath, Tables: SnapshotTables})
+	return snapshot.Export(ctx, snapshot.ExportOptions{DB: s.DB(), RootDir: opts.RepoPath, Tables: SnapshotTables})
 }
 
 func Import(ctx context.Context, s *store.Store, opts Options) (Manifest, error) {
-	manifest, err := pack.Import(ctx, pack.ImportOptions{DB: s.DB(), RootDir: opts.RepoPath, DeleteTables: SnapshotTables})
+	manifest, err := snapshot.Import(ctx, snapshot.ImportOptions{DB: s.DB(), RootDir: opts.RepoPath, DeleteTables: SnapshotTables})
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -99,7 +99,7 @@ func Import(ctx context.Context, s *store.Store, opts Options) (Manifest, error)
 }
 
 func ImportIfChanged(ctx context.Context, s *store.Store, opts Options) (Manifest, bool, error) {
-	manifest, err := pack.ReadManifest(opts.RepoPath)
+	manifest, err := snapshot.ReadManifest(opts.RepoPath)
 	if err != nil {
 		return Manifest{}, false, err
 	}
@@ -170,7 +170,7 @@ func ReadSyncState(ctx context.Context, s *store.Store) (SyncState, error) {
 }
 
 func ReadManifest(repoPath string) (Manifest, error) {
-	manifest, err := pack.ReadManifest(repoPath)
+	manifest, err := snapshot.ReadManifest(repoPath)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -180,8 +180,8 @@ func ReadManifest(repoPath string) (Manifest, error) {
 	return manifest, nil
 }
 
-func gitshareOptions(opts Options) gitshare.Options {
-	return gitshare.Options{RepoPath: opts.RepoPath, Remote: opts.Remote, Branch: normalizeBranch(opts.Branch)}
+func mirrorOptions(opts Options) mirror.Options {
+	return mirror.Options{RepoPath: opts.RepoPath, Remote: opts.Remote, Branch: normalizeBranch(opts.Branch)}
 }
 
 func exportTable(ctx context.Context, db *sql.DB, dataDir, table string) (TableManifest, error) {

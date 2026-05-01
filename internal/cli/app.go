@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vincentkoc/crawlkit/termkit"
+	"github.com/vincentkoc/crawlkit/tui"
 	"github.com/vincentkoc/slacrawl/internal/config"
 	"github.com/vincentkoc/slacrawl/internal/report"
 	"github.com/vincentkoc/slacrawl/internal/share"
@@ -433,12 +433,12 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 	if format == FormatJSON {
 		return a.writeJSON(items)
 	}
-	if err := termkit.Run(ctx, termkit.Options{
+	if err := tui.Run(ctx, tui.Options{
 		Title:        "slacrawl archive",
 		EmptyMessage: "slacrawl has no local messages yet",
 		Items:        items,
 	}); err != nil {
-		if errors.Is(err, termkit.ErrNotTerminal) {
+		if errors.Is(err, tui.ErrNotTerminal) {
 			return fmt.Errorf("%w; run slacrawl tui from a TTY or pass --json", err)
 		}
 		return err
@@ -446,14 +446,14 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 	return nil
 }
 
-func slackTUIItems(rows []store.MessageRow) []termkit.Item {
-	items := make([]termkit.Item, 0, len(rows))
+func slackTUIItems(rows []store.MessageRow) []tui.Item {
+	items := make([]tui.Item, 0, len(rows))
 	for _, row := range rows {
 		title := strings.TrimSpace(row.Text)
 		if title == "" {
 			title = row.ChannelID + " " + row.TS
 		}
-		items = append(items, termkit.Item{
+		items = append(items, tui.Item{
 			Title:    title,
 			Subtitle: strings.TrimSpace(strings.Join([]string{row.WorkspaceID, row.ChannelID, row.UserID, row.TS}, " ")),
 			Detail:   strings.TrimSpace(strings.Join([]string{row.NormalizedText, "thread=" + row.ThreadTS, "subtype=" + row.Subtype}, "\n")),

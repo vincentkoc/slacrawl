@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/vincentkoc/crawlkit/configkit"
+	crawlconfig "github.com/vincentkoc/crawlkit/config"
 )
 
 const (
@@ -91,13 +91,13 @@ type Tokens struct {
 	User string
 }
 
-var appConfig = configkit.App{Name: "slacrawl", BaseDir: "~/" + defaultDirName, LegacyBaseDir: "~/" + defaultDirName}
+var appConfig = crawlconfig.App{Name: "slacrawl", BaseDir: "~/" + defaultDirName, LegacyBaseDir: "~/" + defaultDirName}
 
 func Default() Config {
 	paths, err := appConfig.DefaultPaths()
 	if err != nil {
 		base := "~/" + defaultDirName
-		paths = configkit.Paths{
+		paths = crawlconfig.Paths{
 			DBPath:   filepath.ToSlash(filepath.Join(base, "slacrawl.db")),
 			CacheDir: filepath.ToSlash(filepath.Join(base, "cache")),
 			LogDir:   filepath.ToSlash(filepath.Join(base, "logs")),
@@ -143,7 +143,7 @@ func DefaultConfigPath() (string, error) {
 
 func Load(path string) (Config, error) {
 	cfg := Default()
-	if err := configkit.LoadTOML(path, &cfg); err != nil {
+	if err := crawlconfig.LoadTOML(path, &cfg); err != nil {
 		return Config{}, err
 	}
 	if err := cfg.Normalize(); err != nil {
@@ -159,7 +159,7 @@ func (c Config) Save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return configkit.WriteTOML(path, c, 0o644)
+	return crawlconfig.WriteTOML(path, c, 0o644)
 }
 
 func (c *Config) Normalize() error {
@@ -216,7 +216,7 @@ func ExpandPath(path string) (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	return filepath.Clean(configkit.ExpandHome(path)), nil
+	return filepath.Clean(crawlconfig.ExpandHome(path)), nil
 }
 
 func (c Config) ResolveTokens() Tokens {

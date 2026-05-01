@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vincentkoc/crawlkit/sqlitekit"
+	crawlstore "github.com/vincentkoc/crawlkit/store"
 )
 
 const schemaVersion = 2
@@ -251,7 +251,7 @@ type SyncStateRow struct {
 }
 
 func Open(path string) (*Store, error) {
-	base, err := sqlitekit.Open(context.Background(), sqlitekit.Options{Path: path})
+	base, err := crawlstore.Open(context.Background(), crawlstore.Options{Path: path})
 	if err != nil {
 		return nil, err
 	}
