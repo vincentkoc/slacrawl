@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/vincentkoc/crawlkit/sqlitekit"
 )
 
 const schemaVersion = 2
@@ -253,31 +251,27 @@ type SyncStateRow struct {
 }
 
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", path)
+	base, err := sqlitekit.Open(context.Background(), sqlitekit.Options{Path: path})
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db := base.DB()
 	currentVersion, err := readSchemaVersion(db)
 	if err != nil {
-		_ = db.Close()
+		_ = base.Close()
 		return nil, err
 	}
 	if currentVersion > schemaVersion {
-		_ = db.Close()
+		_ = base.Close()
 		return nil, fmt.Errorf("database schema version %d is newer than this slacrawl build supports (%d)", currentVersion, schemaVersion)
 	}
 	if _, err := db.Exec(schema); err != nil {
-		_ = db.Close()
+		_ = base.Close()
 		return nil, err
 	}
 	if currentVersion != schemaVersion {
 		if err := writeSchemaVersion(db, schemaVersion); err != nil {
-			_ = db.Close()
+			_ = base.Close()
 			return nil, err
 		}
 	}

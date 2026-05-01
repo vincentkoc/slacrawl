@@ -8,10 +8,12 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/syndtr/goleveldb v1.0.0
 	golang.org/x/text v0.3.8
-	modernc.org/sqlite v1.50.0
 )
 
-require github.com/pelletier/go-toml/v2 v2.3.0 // indirect
+require (
+	github.com/pelletier/go-toml/v2 v2.3.0 // indirect
+	modernc.org/sqlite v1.50.0 // indirect
+)
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
