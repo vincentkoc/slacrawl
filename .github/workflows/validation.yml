@@ -31,3 +31,4 @@ jobs:
           output="$(go run ./cmd/slacrawl --help 2>&1 || true)"
           printf '%s\n' "$output"
           printf '%s' "$output" | grep -q "Usage of slacrawl:"
+          printf '%s' "$output" | grep -q "tui"
