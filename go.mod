@@ -4,13 +4,14 @@ go 1.26.2
 
 require (
 	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db
-	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/slack-go/slack v0.17.3
 	github.com/stretchr/testify v1.11.1
 	github.com/syndtr/goleveldb v1.0.0
 	golang.org/x/text v0.3.8
 	modernc.org/sqlite v1.50.0
 )
+
+require github.com/pelletier/go-toml/v2 v2.3.0 // indirect
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -21,6 +22,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/vincentkoc/crawlkit v0.0.0
 	golang.org/x/sys v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.72.0 // indirect
