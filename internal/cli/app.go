@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vincentkoc/crawlkit/termkit"
 	"github.com/vincentkoc/slacrawl/internal/config"
 	"github.com/vincentkoc/slacrawl/internal/report"
 	"github.com/vincentkoc/slacrawl/internal/share"
@@ -110,6 +111,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runImport(ctx, rest[1:])
 	case "search":
 		return a.runSearch(ctx, *configPath, rest[1:], outputFormat)
+	case "tui":
+		return a.runTUI(ctx, *configPath, rest[1:], outputFormat)
 	case "messages":
 		return a.runMessages(ctx, *configPath, rest[1:], outputFormat)
 	case "mentions":
@@ -395,6 +398,69 @@ func (a *App) runSearch(ctx context.Context, configPath string, args []string, f
 		return err
 	}
 	return a.writeOutput("Search", results, format, false)
+}
+
+func (a *App) runTUI(ctx context.Context, configPath string, args []string, format OutputFormat) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	workspaceID := fs.String("workspace", "", "workspace id")
+	channelID := fs.String("channel", "", "channel id")
+	userID := fs.String("author", "", "user id")
+	limit := fs.Int("limit", 200, "row limit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("tui takes flags only")
+	}
+	if *limit <= 0 {
+		return errors.New("tui --limit must be positive")
+	}
+	st, err := a.openReadableStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	rows, err := st.Messages(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, store.RequireLimit(*limit))
+	if err != nil {
+		return err
+	}
+	items := slackTUIItems(rows)
+	if format == FormatJSON {
+		return a.writeJSON(items)
+	}
+	if err := termkit.Run(ctx, termkit.Options{
+		Title:        "slacrawl archive",
+		EmptyMessage: "slacrawl has no local messages yet",
+		Items:        items,
+	}); err != nil {
+		if errors.Is(err, termkit.ErrNotTerminal) {
+			return fmt.Errorf("%w; run slacrawl tui from a TTY or pass --json", err)
+		}
+		return err
+	}
+	return nil
+}
+
+func slackTUIItems(rows []store.MessageRow) []termkit.Item {
+	items := make([]termkit.Item, 0, len(rows))
+	for _, row := range rows {
+		title := strings.TrimSpace(row.Text)
+		if title == "" {
+			title = row.ChannelID + " " + row.TS
+		}
+		items = append(items, termkit.Item{
+			Title:    title,
+			Subtitle: strings.TrimSpace(strings.Join([]string{row.WorkspaceID, row.ChannelID, row.UserID, row.TS}, " ")),
+			Detail:   strings.TrimSpace(strings.Join([]string{row.NormalizedText, "thread=" + row.ThreadTS, "subtype=" + row.Subtype}, "\n")),
+			Tags:     []string{"message", row.WorkspaceID, row.ChannelID},
+		})
+	}
+	return items
 }
 
 func (a *App) runMessages(ctx context.Context, configPath string, args []string, format OutputFormat) error {

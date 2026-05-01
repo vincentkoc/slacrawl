@@ -22,6 +22,7 @@ var (
 		"tail",
 		"watch",
 		"search",
+		"tui",
 		"messages",
 		"mentions",
 		"sql",
@@ -52,6 +53,7 @@ var (
 		"tail":       {"--workspace", "--repair-every", "--help", "-h"},
 		"watch":      {"--desktop-every", "--help", "-h"},
 		"search":     {"--workspace", "--help", "-h"},
+		"tui":        {"--workspace", "--channel", "--author", "--limit", "--help", "-h"},
 		"messages":   {"--workspace", "--channel", "--author", "--limit", "--help", "-h"},
 		"mentions":   {"--workspace", "--target", "--limit", "--help", "-h"},
 		"sql":        {"--help", "-h"},
@@ -105,7 +107,7 @@ _slacrawl()
     local i
     for ((i=1; i < ${#words[@]}; i++)); do
         case "${words[i]}" in
-            init|doctor|report|digest|analytics|publish|subscribe|update|sync|import|tail|watch|search|messages|mentions|sql|users|channels|status|completion)
+            init|doctor|report|digest|analytics|publish|subscribe|update|sync|import|tail|watch|search|tui|messages|mentions|sql|users|channels|status|completion)
                 command="${words[i]}"
                 break
                 ;;
@@ -196,6 +198,9 @@ _slacrawl()
             ;;
         search)
             COMPREPLY=( $(compgen -W "--workspace --help -h ${global_flags}" -- "${cur}") )
+            ;;
+        tui)
+            COMPREPLY=( $(compgen -W "--workspace --channel --author --limit --help -h ${global_flags}" -- "${cur}") )
             ;;
         messages)
             COMPREPLY=( $(compgen -W "--workspace --channel --author --limit --help -h ${global_flags}" -- "${cur}") )
@@ -305,6 +310,9 @@ _slacrawl() {
           ;;
         search)
           _arguments '--workspace[workspace id]:workspace id:'
+          ;;
+        tui)
+          _arguments '--workspace[workspace id]:workspace id:' '--channel[channel id]:channel id:' '--author[user id]:user id:' '--limit[row limit]:limit:'
           ;;
         messages)
           _arguments '--workspace[workspace id]:workspace id:' '--channel[channel id]:channel id:' '--author[user id]:user id:' '--limit[row limit]:limit:'

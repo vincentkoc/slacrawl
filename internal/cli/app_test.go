@@ -467,6 +467,7 @@ func TestCompletionBashOutput(t *testing.T) {
 	require.Contains(t, out, "complete -F _slacrawl slacrawl")
 	require.Contains(t, out, "completion")
 	require.Contains(t, out, "report")
+	require.Contains(t, out, "tui")
 	require.Contains(t, out, "--format")
 	require.Contains(t, out, "--exclude-channels")
 	require.Contains(t, out, "--auto-join")
@@ -486,10 +487,47 @@ func TestCompletionZshOutput(t *testing.T) {
 	require.Contains(t, out, "#compdef slacrawl")
 	require.Contains(t, out, "_values 'shell' bash zsh")
 	require.Contains(t, out, "report")
+	require.Contains(t, out, "tui")
 	require.Contains(t, out, "--no-color")
 	require.Contains(t, out, "--exclude-channels")
 	require.Contains(t, out, "--auto-join")
 	require.Contains(t, out, "public_channel")
+}
+
+func TestTUIJSONListsMessages(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.toml")
+	dbPath := filepath.Join(tmp, "slacrawl.db")
+	ctx := context.Background()
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "init", "--db", dbPath}))
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	require.NoError(t, st.UpsertWorkspace(ctx, store.Workspace{ID: "T1", Name: "team", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertChannel(ctx, store.Channel{ID: "C1", WorkspaceID: "T1", Name: "engineering", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertUser(ctx, store.User{ID: "U1", WorkspaceID: "T1", Name: "alice", DisplayName: "Alice", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertMessage(ctx, store.Message{
+		ChannelID: "C1", TS: "1780000000.000001", WorkspaceID: "T1", UserID: "U1",
+		Text: "ship crawlkit tui", NormalizedText: "ship crawlkit tui", SourceRank: 2, SourceName: "api-bot", RawJSON: "{}",
+		UpdatedAt: now,
+	}, nil))
+	require.NoError(t, st.Close())
+
+	before, err := os.ReadFile(dbPath)
+	require.NoError(t, err)
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--json", "tui", "--limit", "5"}))
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows))
+	require.NotEmpty(t, rows)
+	require.Equal(t, "ship crawlkit tui", rows[0]["title"])
+	after, err := os.ReadFile(dbPath)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "tui --json should not mutate the database")
 }
 
 func TestReportIncludesArchiveAndShareState(t *testing.T) {
