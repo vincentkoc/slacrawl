@@ -78,6 +78,9 @@ func Push(ctx context.Context, opts Options) error {
 }
 
 func Export(ctx context.Context, s *store.Store, opts Options) (Manifest, error) {
+	if err := EnsureRepo(ctx, opts); err != nil {
+		return Manifest{}, err
+	}
 	return pack.Export(ctx, pack.ExportOptions{DB: s.DB(), RootDir: opts.RepoPath, Tables: SnapshotTables})
 }
 
