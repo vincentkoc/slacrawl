@@ -429,35 +429,40 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 	if err != nil {
 		return err
 	}
-	items := slackTUIItems(rows)
-	if format == FormatJSON {
-		return a.writeJSON(items)
-	}
-	if err := tui.Run(ctx, tui.Options{
+	archiveRows := slackTUIRows(rows)
+	return tui.Browse(ctx, tui.BrowseOptions{
+		AppName:      "slacrawl",
 		Title:        "slacrawl archive",
 		EmptyMessage: "slacrawl has no local messages yet",
-		Items:        items,
-	}); err != nil {
-		if errors.Is(err, tui.ErrNotTerminal) {
-			return fmt.Errorf("%w; run slacrawl tui from a TTY or pass --json", err)
-		}
-		return err
-	}
-	return nil
+		Rows:         archiveRows,
+		JSON:         format == FormatJSON,
+		Stdout:       a.Stdout,
+	})
 }
 
-func slackTUIItems(rows []store.MessageRow) []tui.Item {
-	items := make([]tui.Item, 0, len(rows))
+func slackTUIRows(rows []store.MessageRow) []tui.Row {
+	items := make([]tui.Row, 0, len(rows))
 	for _, row := range rows {
 		title := strings.TrimSpace(row.Text)
 		if title == "" {
 			title = row.ChannelID + " " + row.TS
 		}
-		items = append(items, tui.Item{
-			Title:    title,
-			Subtitle: strings.TrimSpace(strings.Join([]string{row.WorkspaceID, row.ChannelID, row.UserID, row.TS}, " ")),
-			Detail:   strings.TrimSpace(strings.Join([]string{row.NormalizedText, "thread=" + row.ThreadTS, "subtype=" + row.Subtype}, "\n")),
-			Tags:     []string{"message", row.WorkspaceID, row.ChannelID},
+		items = append(items, tui.Row{
+			Source:    "slack",
+			Kind:      "message",
+			ID:        strings.TrimSpace(row.ChannelID + "/" + row.TS),
+			ParentID:  row.ThreadTS,
+			Scope:     row.WorkspaceID,
+			Container: row.ChannelID,
+			Author:    row.UserID,
+			Title:     title,
+			Text:      row.NormalizedText,
+			CreatedAt: row.TS,
+			Tags:      []string{row.WorkspaceID, row.ChannelID},
+			Fields: map[string]string{
+				"subtype": row.Subtype,
+				"thread":  row.ThreadTS,
+			},
 		})
 	}
 	return items
