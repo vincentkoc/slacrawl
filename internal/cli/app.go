@@ -541,14 +541,30 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 	}
 	archiveRows := slackTUIRows(rows)
 	return tui.Browse(ctx, tui.BrowseOptions{
-		AppName:      "slacrawl",
-		Title:        "slacrawl archive",
-		EmptyMessage: "slacrawl has no local messages yet",
-		Rows:         archiveRows,
-		JSON:         format == FormatJSON,
-		Layout:       tui.LayoutChat,
-		Stdout:       a.Stdout,
+		AppName:        "slacrawl",
+		Title:          "slacrawl archive",
+		EmptyMessage:   "slacrawl has no local messages yet",
+		Rows:           archiveRows,
+		JSON:           format == FormatJSON,
+		Layout:         tui.LayoutChat,
+		SourceKind:     archiveSourceKind(cfg.Share.Remote),
+		SourceLocation: archiveSourceLocation(cfg),
+		Stdout:         a.Stdout,
 	})
+}
+
+func archiveSourceKind(remote string) string {
+	if strings.TrimSpace(remote) != "" {
+		return tui.SourceRemote
+	}
+	return tui.SourceLocal
+}
+
+func archiveSourceLocation(cfg config.Config) string {
+	if strings.TrimSpace(cfg.Share.Remote) != "" {
+		return cfg.Share.Remote
+	}
+	return cfg.DBPath
 }
 
 func slackTUIRows(rows []store.MessageRow) []tui.Row {
