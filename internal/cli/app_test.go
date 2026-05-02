@@ -513,6 +513,20 @@ func TestCompletionZshOutput(t *testing.T) {
 	require.Contains(t, out, "public_channel")
 }
 
+func TestTUIHelpReturnsUsage(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	app := &App{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	require.NoError(t, app.Run(context.Background(), []string{"tui", "--help"}))
+	require.Contains(t, stdout.String(), "Usage of tui:")
+	require.Contains(t, stdout.String(), "-limit")
+	require.Empty(t, stderr.String())
+}
+
 func TestTUIJSONListsMessages(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.toml")

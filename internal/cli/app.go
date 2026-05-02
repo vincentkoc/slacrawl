@@ -503,18 +503,23 @@ func (a *App) runSearch(ctx context.Context, configPath string, args []string, f
 }
 
 func (a *App) runTUI(ctx context.Context, configPath string, args []string, format OutputFormat) error {
-	cfg, err := loadConfig(configPath)
-	if err != nil {
-		return err
-	}
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(a.Stderr)
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fs.SetOutput(a.Stdout)
+			break
+		}
+	}
 	workspaceID := fs.String("workspace", "", "workspace id")
 	channelID := fs.String("channel", "", "channel id")
 	userID := fs.String("author", "", "user id")
 	limit := fs.Int("limit", 200, "row limit")
 	jsonOut := fs.Bool("json", false, "write browser rows as JSON")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if *jsonOut {
@@ -525,6 +530,10 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 	}
 	if *limit <= 0 {
 		return errors.New("tui --limit must be positive")
+	}
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
 	}
 	var rows []store.MessageRow
 	st, err := store.OpenReadOnly(cfg.DBPath)
