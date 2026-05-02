@@ -205,8 +205,10 @@ type Status struct {
 type MessageRow struct {
 	WorkspaceID    string `json:"workspace_id"`
 	ChannelID      string `json:"channel_id"`
+	ChannelName    string `json:"channel_name,omitempty"`
 	TS             string `json:"ts"`
 	UserID         string `json:"user_id"`
+	UserName       string `json:"user_name,omitempty"`
 	Text           string `json:"text"`
 	NormalizedText string `json:"normalized_text"`
 	ThreadTS       string `json:"thread_ts"`
@@ -491,9 +493,13 @@ func (s *Store) Status(ctx context.Context) (Status, error) {
 
 func (s *Store) Search(ctx context.Context, workspaceID string, query string, limit int) ([]MessageRow, error) {
 	sqlQuery := `
-select m.workspace_id, m.channel_id, m.ts, m.user_id, m.text, m.normalized_text, m.thread_ts, m.subtype
+select m.workspace_id, m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
+       m.text, m.normalized_text, m.thread_ts, m.subtype
 from message_fts f
 join messages m on f.message_key = m.channel_id || '|' || m.ts
+left join channels c on c.id = m.channel_id
+left join users u on u.workspace_id = m.workspace_id and u.id = m.user_id
 where message_fts match ?
   and (? = '' or m.workspace_id = ?)
 order by m.ts desc
@@ -509,23 +515,27 @@ limit ?
 
 func (s *Store) Messages(ctx context.Context, workspaceID string, channelID string, userID string, limit int) ([]MessageRow, error) {
 	query := `
-select workspace_id, channel_id, ts, user_id, text, normalized_text, thread_ts, subtype
-from messages
+select m.workspace_id, m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
+       m.text, m.normalized_text, m.thread_ts, m.subtype
+from messages m
+left join channels c on c.id = m.channel_id
+left join users u on u.workspace_id = m.workspace_id and u.id = m.user_id
 where 1=1`
 	args := []any{}
 	if workspaceID != "" {
-		query += ` and workspace_id = ?`
+		query += ` and m.workspace_id = ?`
 		args = append(args, workspaceID)
 	}
 	if channelID != "" {
-		query += ` and channel_id = ?`
+		query += ` and m.channel_id = ?`
 		args = append(args, channelID)
 	}
 	if userID != "" {
-		query += ` and user_id = ?`
+		query += ` and m.user_id = ?`
 		args = append(args, userID)
 	}
-	query += ` order by ts desc limit ?`
+	query += ` order by m.ts desc limit ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -768,7 +778,7 @@ func scanMessageRows(rows *sql.Rows) ([]MessageRow, error) {
 	var out []MessageRow
 	for rows.Next() {
 		var row MessageRow
-		if err := rows.Scan(&row.WorkspaceID, &row.ChannelID, &row.TS, &row.UserID, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype); err != nil {
+		if err := rows.Scan(&row.WorkspaceID, &row.ChannelID, &row.ChannelName, &row.TS, &row.UserID, &row.UserName, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
