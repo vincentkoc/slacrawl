@@ -570,9 +570,16 @@ func archiveSourceLocation(cfg config.Config) string {
 func slackTUIRows(rows []store.MessageRow) []tui.Row {
 	items := make([]tui.Row, 0, len(rows))
 	for _, row := range rows {
-		title := strings.TrimSpace(row.Text)
+		title := strings.TrimSpace(row.NormalizedText)
+		if title == "" {
+			title = strings.TrimSpace(row.Text)
+		}
 		if title == "" {
 			title = row.ChannelID + " " + row.TS
+		}
+		detail := strings.TrimSpace(row.Text)
+		if detail == "" {
+			detail = row.NormalizedText
 		}
 		items = append(items, tui.Row{
 			Source:    "slack",
@@ -583,16 +590,34 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 			Container: row.ChannelID,
 			Author:    row.UserID,
 			Title:     title,
-			Text:      row.NormalizedText,
-			CreatedAt: row.TS,
+			Text:      detail,
+			CreatedAt: formatSlackTimestamp(row.TS),
 			Tags:      []string{row.WorkspaceID, row.ChannelID},
 			Fields: map[string]string{
 				"subtype": row.Subtype,
 				"thread":  row.ThreadTS,
+				"ts":      row.TS,
 			},
 		})
 	}
 	return items
+}
+
+func formatSlackTimestamp(ts string) string {
+	seconds, fraction, ok := strings.Cut(strings.TrimSpace(ts), ".")
+	if !ok || seconds == "" {
+		return ts
+	}
+	sec, err := strconv.ParseInt(seconds, 10, 64)
+	if err != nil {
+		return ts
+	}
+	fraction = (fraction + "000000000")[:9]
+	nsec, err := strconv.ParseInt(fraction, 10, 64)
+	if err != nil {
+		nsec = 0
+	}
+	return time.Unix(sec, nsec).UTC().Format(time.RFC3339Nano)
 }
 
 func (a *App) runMessages(ctx context.Context, configPath string, args []string, format OutputFormat) error {

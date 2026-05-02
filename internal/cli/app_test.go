@@ -531,7 +531,7 @@ func TestTUIJSONListsMessages(t *testing.T) {
 	require.NoError(t, st.UpsertUser(ctx, store.User{ID: "U1", WorkspaceID: "T1", Name: "alice", DisplayName: "Alice", RawJSON: "{}", UpdatedAt: now}))
 	require.NoError(t, st.UpsertMessage(ctx, store.Message{
 		ChannelID: "C1", TS: "1780000000.000001", WorkspaceID: "T1", UserID: "U1",
-		Text: "ship crawlkit tui", NormalizedText: "ship crawlkit tui", SourceRank: 2, SourceName: "api-bot", RawJSON: "{}",
+		Text: "<@U1> ship crawlkit tui", NormalizedText: "Alice ship crawlkit tui", SourceRank: 2, SourceName: "api-bot", RawJSON: "{}",
 		UpdatedAt: now,
 	}, nil))
 	require.NoError(t, st.Close())
@@ -543,7 +543,9 @@ func TestTUIJSONListsMessages(t *testing.T) {
 	var rows []map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows))
 	require.NotEmpty(t, rows)
-	require.Equal(t, "ship crawlkit tui", rows[0]["title"])
+	require.Equal(t, "Alice ship crawlkit tui", rows[0]["title"])
+	require.Equal(t, "<@U1> ship crawlkit tui", rows[0]["text"])
+	require.Equal(t, "2026-05-28T20:26:40.000001Z", rows[0]["created_at"])
 	require.Equal(t, "slack", rows[0]["source"])
 	require.Equal(t, "message", rows[0]["kind"])
 	require.Equal(t, "T1", rows[0]["scope"])
