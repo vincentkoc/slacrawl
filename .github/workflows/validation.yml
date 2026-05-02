@@ -23,7 +23,7 @@ jobs:
         run: go test ./...
 
       - name: Build CLI
-        run: go build -o bin/slacrawl ./cmd/slacrawl
+        run: go build -ldflags "-X github.com/vincentkoc/slacrawl/internal/cli.version=ci" -o bin/slacrawl ./cmd/slacrawl
 
       - name: Smoke test CLI control surface
         run: |
@@ -33,7 +33,7 @@ jobs:
           printf '%s' "$output" | grep -q "Usage of slacrawl:"
           printf '%s' "$output" | grep -q "metadata"
           printf '%s' "$output" | grep -q "tui"
-          test -n "$(./bin/slacrawl --version)"
+          test "$(./bin/slacrawl --version)" = "ci"
           ./bin/slacrawl metadata --json | grep -q '"schema_version"'
           cfg="$RUNNER_TEMP/slacrawl.toml"
           db="$RUNNER_TEMP/slacrawl.db"
