@@ -6,4 +6,5 @@
 - Keep status, doctor, and TUI reads safe for fresh or missing local databases without triggering git-share auto-update.
 - Add `slacrawl tui`, a terminal archive browser for stored Slack messages using the shared `crawlkit/tui` package.
 - Render TUI rows with compact panes and normalized Slack message titles so raw Slack markup stays in detail, not the row list.
+- Keep Slack thread roots at top level in the shared TUI while replies remain nested in chat-style thread detail.
 - Extend shell completion, help text, and validation smoke coverage for the new TUI command.
