@@ -565,9 +565,28 @@ func TestTUIJSONListsMessages(t *testing.T) {
 	require.Equal(t, "T1", rows[0]["scope"])
 	require.Equal(t, "engineering", rows[0]["container"])
 	require.Equal(t, "Alice", rows[0]["author"])
+	require.Empty(t, rows[0]["parent_id"])
 	after, err := os.ReadFile(dbPath)
 	require.NoError(t, err)
 	require.Equal(t, before, after, "tui --json should not mutate the database")
+}
+
+func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		ChannelID:      "C1",
+		ChannelName:    "engineering",
+		TS:             "1780000000.000001",
+		ThreadTS:       "1780000000.000001",
+		UserID:         "U1",
+		UserName:       "Alice",
+		Text:           "root",
+		NormalizedText: "root",
+	}})
+	require.Len(t, rows, 1)
+	require.Empty(t, rows[0].ParentID)
+	require.Equal(t, "engineering", rows[0].Container)
+	require.Equal(t, "Alice", rows[0].Author)
 }
 
 func TestReportIncludesArchiveAndShareState(t *testing.T) {

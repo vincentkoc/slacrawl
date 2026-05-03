@@ -610,7 +610,7 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 			Source:    "slack",
 			Kind:      "message",
 			ID:        strings.TrimSpace(row.ChannelID + "/" + row.TS),
-			ParentID:  row.ThreadTS,
+			ParentID:  slackParentTS(row),
 			Scope:     row.WorkspaceID,
 			Container: coalesce(row.ChannelName, row.ChannelID),
 			Author:    coalesce(row.UserName, row.UserID),
@@ -628,6 +628,14 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 		})
 	}
 	return items
+}
+
+func slackParentTS(row store.MessageRow) string {
+	threadTS := strings.TrimSpace(row.ThreadTS)
+	if threadTS == "" || threadTS == strings.TrimSpace(row.TS) {
+		return ""
+	}
+	return threadTS
 }
 
 func formatSlackTimestamp(ts string) string {
