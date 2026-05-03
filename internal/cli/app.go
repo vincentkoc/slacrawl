@@ -666,7 +666,7 @@ func slackParentTS(row store.MessageRow) string {
 }
 
 func formatSlackTimestamp(ts string) string {
-	seconds, fraction, ok := strings.Cut(strings.TrimSpace(ts), ".")
+	seconds, fraction, ok := strings.Cut(slackTimestampValue(ts), ".")
 	if !ok || seconds == "" {
 		return ts
 	}
@@ -680,6 +680,17 @@ func formatSlackTimestamp(ts string) string {
 		nsec = 0
 	}
 	return time.Unix(sec, nsec).UTC().Format(time.RFC3339Nano)
+}
+
+func slackTimestampValue(ts string) string {
+	value := strings.TrimSpace(ts)
+	if strings.HasPrefix(value, "draft:") {
+		value = strings.TrimPrefix(value, "draft:")
+		if before, _, ok := strings.Cut(value, ":"); ok {
+			return before
+		}
+	}
+	return value
 }
 
 func (a *App) runMessages(ctx context.Context, configPath string, args []string, format OutputFormat) error {

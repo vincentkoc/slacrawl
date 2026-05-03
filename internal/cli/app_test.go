@@ -611,6 +611,18 @@ func TestSlackTUIRowsKeepRawTextAndReadableDetail(t *testing.T) {
 	require.Equal(t, "Alice ship crawlkit tui", rows[0].Detail)
 }
 
+func TestSlackTUIRowsNormalizeDraftTimestamps(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID: "T1",
+		ChannelID:   "C1",
+		TS:          "draft:1776788414.770369:C0AQ7TZR9KP-1776788221.127409",
+		UserName:    "Alice",
+		Text:        "draft text",
+	}})
+	require.Len(t, rows, 1)
+	require.Equal(t, "2026-04-21T16:20:14.770369Z", rows[0].CreatedAt)
+}
+
 func TestReportIncludesArchiveAndShareState(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.toml")
