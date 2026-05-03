@@ -499,7 +499,7 @@ select m.workspace_id, m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
 from message_fts f
 join messages m on f.message_key = m.channel_id || '|' || m.ts
 left join channels c on c.id = m.channel_id
-left join users u on u.workspace_id = m.workspace_id and u.id = m.user_id
+left join users u on u.id = m.user_id
 where message_fts match ?
   and (? = '' or m.workspace_id = ?)
 order by m.ts desc
@@ -520,7 +520,7 @@ select m.workspace_id, m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
        m.text, m.normalized_text, m.thread_ts, m.subtype
 from messages m
 left join channels c on c.id = m.channel_id
-left join users u on u.workspace_id = m.workspace_id and u.id = m.user_id
+left join users u on u.id = m.user_id
 where 1=1`
 	args := []any{}
 	if workspaceID != "" {

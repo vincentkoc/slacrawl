@@ -145,6 +145,37 @@ func TestWorkspaceFiltersApplyToReadQueries(t *testing.T) {
 	require.Equal(t, "T1", channels[0].WorkspaceID)
 }
 
+func TestMessagesResolveUserNamesBySlackUserID(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, s.UpsertWorkspace(ctx, Workspace{ID: "T1", Name: "one", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertWorkspace(ctx, Workspace{ID: "T2", Name: "two", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertChannel(ctx, Channel{ID: "C2", WorkspaceID: "T2", Name: "ops", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertUser(ctx, User{ID: "U-global", WorkspaceID: "T1", Name: "fallback", DisplayName: "Global User", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertMessage(ctx, Message{
+		ChannelID:      "C2",
+		TS:             "2.0",
+		WorkspaceID:    "T2",
+		UserID:         "U-global",
+		Text:           "hello",
+		NormalizedText: "hello",
+		SourceRank:     2,
+		SourceName:     "api-bot",
+		RawJSON:        "{}",
+		UpdatedAt:      now,
+	}, nil))
+
+	messages, err := s.Messages(ctx, "T2", "", "", 10)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Equal(t, "Global User", messages[0].UserName)
+}
+
 func TestOpenStampsSchemaVersion(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	s, err := Open(dbPath)
