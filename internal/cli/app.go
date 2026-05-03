@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -450,6 +451,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 		LatestOnly:  *latestOnly,
 		Concurrency: *concurrency,
 		AutoJoin:    boolPtr(*autoJoin),
+		Logger:      progressLogger(a.Stderr),
 	}
 	st, err := a.openStore(cfg)
 	if err != nil {
@@ -474,6 +476,20 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 		"summary": summary,
 	}
 	return a.writeOutput("Sync", result, format, true)
+}
+
+func progressLogger(w io.Writer) *slog.Logger {
+	if w == nil {
+		w = io.Discard
+	}
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return attr
+		},
+	}))
 }
 
 func (a *App) runSearch(ctx context.Context, configPath string, args []string, format OutputFormat) error {

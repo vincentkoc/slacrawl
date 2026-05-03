@@ -1,8 +1,10 @@
 package slackapi
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,6 +31,8 @@ func TestSyncHandlesRateLimitAndThreadCoverage(t *testing.T) {
 		Bot:  "xoxb-test",
 		User: "xoxp-test",
 	}, server.URL()+"/", server.Client())
+	var progressLogs bytes.Buffer
+	client.WithLogger(testProgressLogger(&progressLogs))
 	client.sleep = func(context.Context, time.Duration) error { return nil }
 	client.now = func() time.Time { return time.Date(2026, 3, 8, 1, 2, 3, 0, time.UTC) }
 
@@ -54,6 +58,9 @@ func TestSyncHandlesRateLimitAndThreadCoverage(t *testing.T) {
 		require.Equal(t, "C123", row.ChannelID)
 	}
 	require.Equal(t, "message_replied", rows[0].Subtype)
+	require.Contains(t, progressLogs.String(), `msg="sync progress"`)
+	require.Contains(t, progressLogs.String(), `completion=100.0%`)
+	require.Contains(t, progressLogs.String(), `source=api-bot`)
 }
 
 func TestSyncWithoutUserTokenMarksPartialCoverage(t *testing.T) {
@@ -957,4 +964,15 @@ func newExcludeChannelSlackServer(t *testing.T) *mockSlackServer {
 		}
 	}))
 	return mock
+}
+
+func testProgressLogger(out *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return attr
+		},
+	}))
 }
