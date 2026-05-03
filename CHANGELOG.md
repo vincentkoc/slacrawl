@@ -11,4 +11,5 @@
 - Resolve Slack user mentions to cached display names in read paths so the TUI panes do not leak raw `@U...` IDs.
 - Hide unresolved Slack user IDs from visible TUI author columns while preserving the raw IDs in detail metadata.
 - Inherit the shared crawlkit TUI polish for newest-first startup, count-header sorting, selected-message-first detail panes, and gitcrawl-style metadata labels.
+- Feed Slack reply counts and latest-reply timestamps into the TUI detail metadata for thread roots.
 - Extend shell completion, help text, and validation smoke coverage for the new TUI command.

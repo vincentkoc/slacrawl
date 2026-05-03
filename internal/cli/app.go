@@ -638,11 +638,13 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 			CreatedAt: formatSlackTimestamp(row.TS),
 			Tags:      []string{row.WorkspaceID, row.ChannelID, row.UserID},
 			Fields: map[string]string{
-				"channel_id": row.ChannelID,
-				"subtype":    row.Subtype,
-				"thread":     row.ThreadTS,
-				"ts":         row.TS,
-				"user_id":    row.UserID,
+				"channel_id":   row.ChannelID,
+				"latest_reply": row.LatestReply,
+				"reply_count":  strconv.Itoa(row.ReplyCount),
+				"subtype":      row.Subtype,
+				"thread":       row.ThreadTS,
+				"ts":           row.TS,
+				"user_id":      row.UserID,
 			},
 		})
 	}

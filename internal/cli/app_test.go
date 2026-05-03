@@ -587,6 +587,8 @@ func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
 		UserName:       "Alice",
 		Text:           "root",
 		NormalizedText: "root",
+		ReplyCount:     2,
+		LatestReply:    "1780000100.000001",
 	}})
 	require.Len(t, rows, 1)
 	require.Empty(t, rows[0].ParentID)
@@ -595,6 +597,8 @@ func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
 	require.Equal(t, "Alice", rows[0].Author)
 	require.Equal(t, "root", rows[0].Detail)
 	require.Equal(t, "slack://channel?id=C1&message=1780000000.000001&team=T1", rows[0].URL)
+	require.Equal(t, "2", rows[0].Fields["reply_count"])
+	require.Equal(t, "1780000100.000001", rows[0].Fields["latest_reply"])
 }
 
 func TestSlackTUIRowsHideRawWorkspaceIDsFromScope(t *testing.T) {
