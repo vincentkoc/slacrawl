@@ -622,7 +622,7 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 			Kind:      "message",
 			ID:        strings.TrimSpace(row.ChannelID + "/" + row.TS),
 			ParentID:  slackParentTS(row),
-			Scope:     row.WorkspaceID,
+			Scope:     coalesce(row.WorkspaceName, row.WorkspaceID),
 			Container: coalesce(row.ChannelName, row.ChannelID),
 			Author:    slackAuthorName(row),
 			Title:     title,

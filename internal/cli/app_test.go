@@ -565,7 +565,7 @@ func TestTUIJSONListsMessages(t *testing.T) {
 	require.Equal(t, "2026-05-28T20:26:40.000001Z", rows[0]["created_at"])
 	require.Equal(t, "slack", rows[0]["source"])
 	require.Equal(t, "message", rows[0]["kind"])
-	require.Equal(t, "T1", rows[0]["scope"])
+	require.Equal(t, "team", rows[0]["scope"])
 	require.Equal(t, "engineering", rows[0]["container"])
 	require.Equal(t, "Alice", rows[0]["author"])
 	require.Equal(t, "slack://channel?id=C1&message=1780000000.000001&team=T1", rows[0]["url"])
@@ -578,6 +578,7 @@ func TestTUIJSONListsMessages(t *testing.T) {
 func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
 	rows := slackTUIRows([]store.MessageRow{{
 		WorkspaceID:    "T1",
+		WorkspaceName:  "team",
 		ChannelID:      "C1",
 		ChannelName:    "engineering",
 		TS:             "1780000000.000001",
@@ -589,6 +590,7 @@ func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
 	}})
 	require.Len(t, rows, 1)
 	require.Empty(t, rows[0].ParentID)
+	require.Equal(t, "team", rows[0].Scope)
 	require.Equal(t, "engineering", rows[0].Container)
 	require.Equal(t, "Alice", rows[0].Author)
 	require.Equal(t, "root", rows[0].Detail)

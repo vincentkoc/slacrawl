@@ -206,6 +206,7 @@ type Status struct {
 
 type MessageRow struct {
 	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceName  string `json:"workspace_name,omitempty"`
 	ChannelID      string `json:"channel_id"`
 	ChannelName    string `json:"channel_name,omitempty"`
 	TS             string `json:"ts"`
@@ -500,11 +501,12 @@ func (s *Store) Status(ctx context.Context) (Status, error) {
 
 func (s *Store) Search(ctx context.Context, workspaceID string, query string, limit int) ([]MessageRow, error) {
 	sqlQuery := `
-select m.workspace_id, m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
        coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
        m.text, m.normalized_text, m.thread_ts, m.subtype
 from message_fts f
 join messages m on f.message_key = m.channel_id || '|' || m.ts
+left join workspaces w on w.id = m.workspace_id
 left join channels c on c.id = m.channel_id
 left join users u on u.id = m.user_id
 where message_fts match ?
@@ -526,10 +528,11 @@ limit ?
 
 func (s *Store) Messages(ctx context.Context, workspaceID string, channelID string, userID string, limit int) ([]MessageRow, error) {
 	query := `
-select m.workspace_id, m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
        coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
        m.text, m.normalized_text, m.thread_ts, m.subtype
 from messages m
+left join workspaces w on w.id = m.workspace_id
 left join channels c on c.id = m.channel_id
 left join users u on u.id = m.user_id
 where 1=1`
@@ -884,7 +887,7 @@ func scanMessageRows(rows *sql.Rows) ([]MessageRow, error) {
 	var out []MessageRow
 	for rows.Next() {
 		var row MessageRow
-		if err := rows.Scan(&row.WorkspaceID, &row.ChannelID, &row.ChannelName, &row.TS, &row.UserID, &row.UserName, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype); err != nil {
+		if err := rows.Scan(&row.WorkspaceID, &row.WorkspaceName, &row.ChannelID, &row.ChannelName, &row.TS, &row.UserID, &row.UserName, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
