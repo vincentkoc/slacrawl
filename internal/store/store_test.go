@@ -112,7 +112,7 @@ func TestMessagesResolveMentionDisplayNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "@Alice Example please check this", rows[0].NormalizedText)
-	require.Equal(t, "@Alice Example please check this", rows[0].Text)
+	require.Equal(t, "<@U1> please check this", rows[0].Text)
 }
 
 func TestWorkspaceFiltersApplyToReadQueries(t *testing.T) {

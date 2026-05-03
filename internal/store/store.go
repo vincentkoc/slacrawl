@@ -622,7 +622,6 @@ where mm.mention_type = 'user'
 			continue
 		}
 		rows[index].NormalizedText = replaceUserMentions(rows[index].NormalizedText, mentions)
-		rows[index].Text = replaceUserMentions(rows[index].Text, mentions)
 	}
 	return nil
 }
