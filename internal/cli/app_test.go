@@ -597,6 +597,21 @@ func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
 	require.Equal(t, "slack://channel?id=C1&message=1780000000.000001&team=T1", rows[0].URL)
 }
 
+func TestSlackTUIRowsHideRawWorkspaceIDsFromScope(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		WorkspaceName:  "T1",
+		ChannelID:      "C1",
+		ChannelName:    "engineering",
+		TS:             "1780000000.000001",
+		Text:           "hello",
+		NormalizedText: "hello",
+	}})
+	require.Len(t, rows, 1)
+	require.Empty(t, rows[0].Scope)
+	require.Contains(t, rows[0].Tags, "T1")
+}
+
 func TestSlackTUIRowsKeepRawTextAndReadableDetail(t *testing.T) {
 	rows := slackTUIRows([]store.MessageRow{{
 		WorkspaceID:    "T1",
