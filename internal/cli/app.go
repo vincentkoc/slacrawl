@@ -607,6 +607,10 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 		if detail == "" {
 			detail = row.NormalizedText
 		}
+		readableDetail := strings.TrimSpace(row.NormalizedText)
+		if readableDetail == "" {
+			readableDetail = detail
+		}
 		items = append(items, tui.Row{
 			Source:    "slack",
 			Kind:      "message",
@@ -617,6 +621,7 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 			Author:    coalesce(row.UserName, row.UserID),
 			Title:     title,
 			Text:      detail,
+			Detail:    readableDetail,
 			URL:       slackMessageURL(row),
 			CreatedAt: formatSlackTimestamp(row.TS),
 			Tags:      []string{row.WorkspaceID, row.ChannelID, row.UserID},
