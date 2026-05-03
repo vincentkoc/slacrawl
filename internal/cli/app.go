@@ -522,6 +522,12 @@ func (a *App) runSearch(ctx context.Context, configPath string, args []string, f
 func (a *App) runTUI(ctx context.Context, configPath string, args []string, format OutputFormat) error {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(a.Stderr)
+	fs.Usage = func() {
+		_, _ = fmt.Fprintln(fs.Output(), "Usage of tui:")
+		fs.PrintDefaults()
+		_, _ = fmt.Fprintln(fs.Output())
+		_, _ = fmt.Fprintln(fs.Output(), tui.ControlsHelp())
+	}
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
 			fs.SetOutput(a.Stdout)

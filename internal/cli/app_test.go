@@ -524,6 +524,8 @@ func TestTUIHelpReturnsUsage(t *testing.T) {
 	require.NoError(t, app.Run(context.Background(), []string{"tui", "--help"}))
 	require.Contains(t, stdout.String(), "Usage of tui:")
 	require.Contains(t, stdout.String(), "-limit")
+	require.Contains(t, stdout.String(), "right-click")
+	require.Contains(t, stdout.String(), "#              jump")
 	require.Empty(t, stderr.String())
 }
 
