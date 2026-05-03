@@ -216,6 +216,7 @@ type MessageRow struct {
 	NormalizedText string `json:"normalized_text"`
 	ThreadTS       string `json:"thread_ts"`
 	Subtype        string `json:"subtype"`
+	SourceName     string `json:"source_name,omitempty"`
 }
 
 type MentionRow struct {
@@ -503,7 +504,7 @@ func (s *Store) Search(ctx context.Context, workspaceID string, query string, li
 	sqlQuery := `
 select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
        coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
-       m.text, m.normalized_text, m.thread_ts, m.subtype
+       m.text, m.normalized_text, m.thread_ts, m.subtype, m.source_name
 from message_fts f
 join messages m on f.message_key = m.channel_id || '|' || m.ts
 left join workspaces w on w.id = m.workspace_id
@@ -530,7 +531,7 @@ func (s *Store) Messages(ctx context.Context, workspaceID string, channelID stri
 	query := `
 select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
        coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
-       m.text, m.normalized_text, m.thread_ts, m.subtype
+       m.text, m.normalized_text, m.thread_ts, m.subtype, m.source_name
 from messages m
 left join workspaces w on w.id = m.workspace_id
 left join channels c on c.id = m.channel_id
@@ -887,7 +888,7 @@ func scanMessageRows(rows *sql.Rows) ([]MessageRow, error) {
 	var out []MessageRow
 	for rows.Next() {
 		var row MessageRow
-		if err := rows.Scan(&row.WorkspaceID, &row.WorkspaceName, &row.ChannelID, &row.ChannelName, &row.TS, &row.UserID, &row.UserName, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype); err != nil {
+		if err := rows.Scan(&row.WorkspaceID, &row.WorkspaceName, &row.ChannelID, &row.ChannelName, &row.TS, &row.UserID, &row.UserName, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype, &row.SourceName); err != nil {
 			return nil, err
 		}
 		out = append(out, row)

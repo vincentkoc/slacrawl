@@ -656,10 +656,38 @@ func slackAuthorName(row store.MessageRow) string {
 	if name := strings.TrimSpace(row.UserName); name != "" {
 		return name
 	}
+	if label := slackSourceLabel(row); label != "" {
+		return label
+	}
 	if strings.TrimSpace(row.UserID) != "" {
 		return "Slack user"
 	}
 	return ""
+}
+
+func slackSourceLabel(row store.MessageRow) string {
+	subtype := strings.ToLower(strings.TrimSpace(row.Subtype))
+	if subtype != "" {
+		return "Slack"
+	}
+	text := strings.ToLower(strings.TrimSpace(coalesce(row.NormalizedText, row.Text)))
+	switch {
+	case strings.Contains(text, "new course started"),
+		strings.Contains(text, "course completed"),
+		strings.Contains(text, "new project created"),
+		strings.Contains(text, "new build update"):
+		return "Build Club"
+	}
+	switch strings.ToLower(strings.TrimSpace(row.SourceName)) {
+	case "desktop-indexeddb":
+		return "Slack desktop"
+	case "slack-export":
+		return "Slack export"
+	case "api-bot", "slack-api":
+		return "Slack API"
+	default:
+		return ""
+	}
 }
 
 func slackMessageURL(row store.MessageRow) string {

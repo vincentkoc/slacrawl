@@ -634,11 +634,27 @@ func TestSlackTUIRowsHideUnresolvedUserIDsFromAuthorColumn(t *testing.T) {
 		ChannelID:      "C1",
 		TS:             "1780000000.000001",
 		UserID:         "U081CAHTCTW",
-		Text:           "app message",
-		NormalizedText: "app message",
+		Text:           ":books: *New Course Started*",
+		NormalizedText: "New Course Started",
+		SourceName:     "desktop-indexeddb",
 	}})
 	require.Len(t, rows, 1)
-	require.Equal(t, "Slack user", rows[0].Author)
+	require.Equal(t, "Build Club", rows[0].Author)
+	require.Equal(t, "U081CAHTCTW", rows[0].Fields["user_id"])
+}
+
+func TestSlackTUIRowsLabelsUnresolvedDesktopMessages(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		ChannelID:      "C1",
+		TS:             "1780000000.000001",
+		UserID:         "U081CAHTCTW",
+		Text:           "ordinary archive message",
+		NormalizedText: "ordinary archive message",
+		SourceName:     "desktop-indexeddb",
+	}})
+	require.Len(t, rows, 1)
+	require.Equal(t, "Slack desktop", rows[0].Author)
 	require.Equal(t, "U081CAHTCTW", rows[0].Fields["user_id"])
 }
 
