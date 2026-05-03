@@ -8,4 +8,5 @@
 - Render TUI rows with compact panes and normalized Slack message titles so raw Slack markup stays in detail, not the row list.
 - Keep Slack thread roots at top level in the shared TUI while replies remain nested in chat-style thread detail.
 - Resolve Slack TUI authors by Slack user ID even when cached user metadata was stored under a different workspace ID.
+- Resolve Slack user mentions to cached display names in read paths so the TUI panes do not leak raw `@U...` IDs.
 - Extend shell completion, help text, and validation smoke coverage for the new TUI command.

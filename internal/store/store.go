@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -222,6 +224,11 @@ type MentionRow struct {
 	MentionType string `json:"mention_type"`
 	TargetID    string `json:"target_id"`
 	DisplayText string `json:"display_text"`
+}
+
+type messageMentionDisplay struct {
+	target  string
+	display string
 }
 
 type UserRow struct {
@@ -510,7 +517,11 @@ limit ?
 		return nil, err
 	}
 	defer rows.Close()
-	return scanMessageRows(rows)
+	out, err := scanMessageRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, s.resolveMessageRowMentions(ctx, out)
 }
 
 func (s *Store) Messages(ctx context.Context, workspaceID string, channelID string, userID string, limit int) ([]MessageRow, error) {
@@ -542,7 +553,103 @@ where 1=1`
 		return nil, err
 	}
 	defer rows.Close()
-	return scanMessageRows(rows)
+	out, err := scanMessageRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, s.resolveMessageRowMentions(ctx, out)
+}
+
+func (s *Store) resolveMessageRowMentions(ctx context.Context, rows []MessageRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	byKey := map[string][]messageMentionDisplay{}
+	keys := make([]string, 0, len(rows))
+	seen := map[string]struct{}{}
+	for _, row := range rows {
+		key := messageKey(row.ChannelID, row.TS)
+		if strings.TrimSpace(key) == "|" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	for start := 0; start < len(keys); start += 400 {
+		end := min(start+400, len(keys))
+		placeholders := strings.TrimRight(strings.Repeat("?,", end-start), ",")
+		query := `
+select mm.channel_id, mm.ts, mm.target_id,
+       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), nullif(mm.display_text, ''), '')
+from message_mentions mm
+left join users u on u.id = mm.target_id
+where mm.mention_type = 'user'
+  and (mm.channel_id || '|' || mm.ts) in (` + placeholders + `)
+`
+		args := make([]any, 0, end-start)
+		for _, key := range keys[start:end] {
+			args = append(args, key)
+		}
+		mentionRows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		for mentionRows.Next() {
+			var channelID, ts, target, display string
+			if err := mentionRows.Scan(&channelID, &ts, &target, &display); err != nil {
+				_ = mentionRows.Close()
+				return err
+			}
+			display = strings.TrimSpace(display)
+			target = strings.TrimSpace(target)
+			if target == "" || display == "" || strings.EqualFold(display, target) {
+				continue
+			}
+			key := messageKey(channelID, ts)
+			byKey[key] = append(byKey[key], messageMentionDisplay{target: target, display: display})
+		}
+		if err := mentionRows.Close(); err != nil {
+			return err
+		}
+	}
+	for index := range rows {
+		key := messageKey(rows[index].ChannelID, rows[index].TS)
+		mentions := byKey[key]
+		if len(mentions) == 0 {
+			continue
+		}
+		rows[index].NormalizedText = replaceUserMentions(rows[index].NormalizedText, mentions)
+		rows[index].Text = replaceUserMentions(rows[index].Text, mentions)
+	}
+	return nil
+}
+
+func replaceUserMentions(value string, mentions []messageMentionDisplay) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(mentions) == 0 {
+		return value
+	}
+	ordered := append([]messageMentionDisplay(nil), mentions...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return len(ordered[i].target) > len(ordered[j].target)
+	})
+	for _, mention := range ordered {
+		target := strings.TrimSpace(mention.target)
+		display := strings.TrimSpace(mention.display)
+		if target == "" || display == "" || strings.EqualFold(target, display) {
+			continue
+		}
+		if !strings.HasPrefix(display, "@") {
+			display = "@" + display
+		}
+		value = regexp.MustCompile(`<@`+regexp.QuoteMeta(target)+`(?:\|[^>]+)?>`).ReplaceAllString(value, display)
+		value = strings.ReplaceAll(value, "@"+target, display)
+		value = strings.ReplaceAll(value, "@"+strings.ToLower(target), display)
+	}
+	return value
 }
 
 func (s *Store) Mentions(ctx context.Context, workspaceID string, target string, limit int) ([]MentionRow, error) {
@@ -805,7 +912,7 @@ func eventType(message Message) string {
 }
 
 func messageKey(channelID string, ts string) string {
-	return channelID + "|" + ts
+	return strings.TrimSpace(channelID) + "|" + strings.TrimSpace(ts)
 }
 
 func stringifyDBValue(value any) any {
