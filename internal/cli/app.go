@@ -558,25 +558,31 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 	if err != nil {
 		return err
 	}
-	var rows []store.MessageRow
-	st, err := store.OpenReadOnly(cfg.DBPath)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	} else {
-		defer st.Close()
-		rows, err = st.Messages(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, store.RequireLimit(*limit))
+	loadRows := func(ctx context.Context) ([]tui.Row, error) {
+		st, err := store.OpenReadOnly(cfg.DBPath)
 		if err != nil {
-			return err
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, nil
+			}
+			return nil, err
 		}
+		defer st.Close()
+		rows, err := st.Messages(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, store.RequireLimit(*limit))
+		if err != nil {
+			return nil, err
+		}
+		return slackTUIRows(rows), nil
 	}
-	archiveRows := slackTUIRows(rows)
+	archiveRows, err := loadRows(ctx)
+	if err != nil {
+		return err
+	}
 	return tui.Browse(ctx, tui.BrowseOptions{
 		AppName:        "slacrawl",
 		Title:          "slacrawl archive",
 		EmptyMessage:   "slacrawl has no local messages yet",
 		Rows:           archiveRows,
+		Refresh:        loadRows,
 		JSON:           format == FormatJSON,
 		Layout:         tui.LayoutChat,
 		SourceKind:     archiveSourceKind(cfg.Share.Remote),
