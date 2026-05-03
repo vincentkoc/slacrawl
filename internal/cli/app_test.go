@@ -611,6 +611,20 @@ func TestSlackTUIRowsKeepRawTextAndReadableDetail(t *testing.T) {
 	require.Equal(t, "Alice ship crawlkit tui", rows[0].Detail)
 }
 
+func TestSlackTUIRowsHideUnresolvedUserIDsFromAuthorColumn(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		ChannelID:      "C1",
+		TS:             "1780000000.000001",
+		UserID:         "U081CAHTCTW",
+		Text:           "app message",
+		NormalizedText: "app message",
+	}})
+	require.Len(t, rows, 1)
+	require.Equal(t, "Slack user", rows[0].Author)
+	require.Equal(t, "U081CAHTCTW", rows[0].Fields["user_id"])
+}
+
 func TestSlackTUIRowsNormalizeDraftTimestamps(t *testing.T) {
 	rows := slackTUIRows([]store.MessageRow{{
 		WorkspaceID: "T1",
