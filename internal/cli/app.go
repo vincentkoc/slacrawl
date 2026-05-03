@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -616,6 +617,7 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 			Author:    coalesce(row.UserName, row.UserID),
 			Title:     title,
 			Text:      detail,
+			URL:       slackMessageURL(row),
 			CreatedAt: formatSlackTimestamp(row.TS),
 			Tags:      []string{row.WorkspaceID, row.ChannelID, row.UserID},
 			Fields: map[string]string{
@@ -628,6 +630,20 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 		})
 	}
 	return items
+}
+
+func slackMessageURL(row store.MessageRow) string {
+	workspaceID := strings.TrimSpace(row.WorkspaceID)
+	channelID := strings.TrimSpace(row.ChannelID)
+	ts := strings.TrimSpace(row.TS)
+	if workspaceID == "" || channelID == "" || ts == "" {
+		return ""
+	}
+	values := url.Values{}
+	values.Set("team", workspaceID)
+	values.Set("id", channelID)
+	values.Set("message", ts)
+	return "slack://channel?" + values.Encode()
 }
 
 func slackParentTS(row store.MessageRow) string {

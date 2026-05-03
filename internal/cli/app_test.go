@@ -565,6 +565,7 @@ func TestTUIJSONListsMessages(t *testing.T) {
 	require.Equal(t, "T1", rows[0]["scope"])
 	require.Equal(t, "engineering", rows[0]["container"])
 	require.Equal(t, "Alice", rows[0]["author"])
+	require.Equal(t, "slack://channel?id=C1&message=1780000000.000001&team=T1", rows[0]["url"])
 	require.Empty(t, rows[0]["parent_id"])
 	after, err := os.ReadFile(dbPath)
 	require.NoError(t, err)
@@ -587,6 +588,7 @@ func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
 	require.Empty(t, rows[0].ParentID)
 	require.Equal(t, "engineering", rows[0].Container)
 	require.Equal(t, "Alice", rows[0].Author)
+	require.Equal(t, "slack://channel?id=C1&message=1780000000.000001&team=T1", rows[0].URL)
 }
 
 func TestReportIncludesArchiveAndShareState(t *testing.T) {
