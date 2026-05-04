@@ -589,7 +589,7 @@ func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
 		NormalizedText: "root",
 		ReplyCount:     2,
 		LatestReply:    "1780000100.000001",
-	}})
+	}}, false, false, 10)
 	require.Len(t, rows, 1)
 	require.Empty(t, rows[0].ParentID)
 	require.Equal(t, "team", rows[0].Scope)
@@ -610,7 +610,7 @@ func TestSlackTUIRowsHideRawWorkspaceIDsFromScope(t *testing.T) {
 		TS:             "1780000000.000001",
 		Text:           "hello",
 		NormalizedText: "hello",
-	}})
+	}}, false, false, 10)
 	require.Len(t, rows, 1)
 	require.Empty(t, rows[0].Scope)
 	require.Contains(t, rows[0].Tags, "T1")
@@ -626,7 +626,7 @@ func TestSlackTUIRowsKeepRawTextAndReadableDetail(t *testing.T) {
 		UserName:       "Alice",
 		Text:           "<@U1> ship crawlkit tui",
 		NormalizedText: "Alice ship crawlkit tui",
-	}})
+	}}, false, false, 10)
 	require.Len(t, rows, 1)
 	require.Equal(t, "<@U1> ship crawlkit tui", rows[0].Text)
 	require.Equal(t, "Alice ship crawlkit tui", rows[0].Detail)
@@ -641,7 +641,7 @@ func TestSlackTUIRowsHideUnresolvedUserIDsFromAuthorColumn(t *testing.T) {
 		Text:           ":books: *New Course Started*",
 		NormalizedText: "New Course Started",
 		SourceName:     "desktop-indexeddb",
-	}})
+	}}, false, false, 10)
 	require.Len(t, rows, 1)
 	require.Equal(t, "Build Club", rows[0].Author)
 	require.Equal(t, "U081CAHTCTW", rows[0].Fields["user_id"])
@@ -656,7 +656,7 @@ func TestSlackTUIRowsLabelsUnresolvedDesktopMessages(t *testing.T) {
 		Text:           "ordinary archive message",
 		NormalizedText: "ordinary archive message",
 		SourceName:     "desktop-indexeddb",
-	}})
+	}}, false, false, 10)
 	require.Len(t, rows, 1)
 	require.Equal(t, "Slack desktop", rows[0].Author)
 	require.Equal(t, "U081CAHTCTW", rows[0].Fields["user_id"])
@@ -669,9 +669,53 @@ func TestSlackTUIRowsNormalizeDraftTimestamps(t *testing.T) {
 		TS:          "draft:1776788414.770369:C0AQ7TZR9KP-1776788221.127409",
 		UserName:    "Alice",
 		Text:        "draft text",
-	}})
+	}}, true, false, 10)
 	require.Len(t, rows, 1)
 	require.Equal(t, "2026-04-21T16:20:14.770369Z", rows[0].CreatedAt)
+}
+
+func TestSlackTUIRowsSkipDesktopDraftsByDefault(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{
+		{
+			WorkspaceID: "T1",
+			ChannelID:   "C1",
+			TS:          "draft:1776788414.770369:C1",
+			Subtype:     "desktop_draft",
+			UserName:    "Alice",
+			Text:        "draft text",
+		},
+		{
+			WorkspaceID: "T1",
+			ChannelID:   "C1",
+			TS:          "1780000000.000001",
+			UserName:    "Alice",
+			Text:        "real message",
+		},
+	}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Equal(t, "real message", rows[0].Title)
+}
+
+func TestSlackTUIRowsSkipNoisySystemMessagesByDefault(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{
+		{
+			WorkspaceID: "T1",
+			ChannelID:   "C1",
+			TS:          "1780000000.000001",
+			UserName:    "Alice",
+			Subtype:     "channel_join",
+			Text:        "Alice has joined the channel",
+		},
+		{
+			WorkspaceID: "T1",
+			ChannelID:   "C1",
+			TS:          "1780000001.000001",
+			UserName:    "Bob",
+			Text:        "actual conversation",
+		},
+	}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Equal(t, "actual conversation", rows[0].Title)
 }
 
 func TestReportIncludesArchiveAndShareState(t *testing.T) {

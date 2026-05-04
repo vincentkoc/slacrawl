@@ -538,6 +538,8 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 	channelID := fs.String("channel", "", "channel id")
 	userID := fs.String("author", "", "user id")
 	limit := fs.Int("limit", 200, "row limit")
+	includeDrafts := fs.Bool("include-drafts", false, "include local desktop draft messages")
+	includeSystem := fs.Bool("include-system", false, "include Slack join/leave/topic system messages")
 	jsonOut := fs.Bool("json", false, "write browser rows as JSON")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -567,11 +569,15 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 			return nil, err
 		}
 		defer st.Close()
-		rows, err := st.Messages(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, store.RequireLimit(*limit))
+		queryLimit := store.RequireLimit(*limit)
+		if !*includeDrafts || !*includeSystem {
+			queryLimit = store.RequireLimit(*limit * 10)
+		}
+		rows, err := st.Messages(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, queryLimit)
 		if err != nil {
 			return nil, err
 		}
-		return slackTUIRows(rows), nil
+		return slackTUIRows(rows, *includeDrafts, *includeSystem, *limit), nil
 	}
 	archiveRows, err := loadRows(ctx)
 	if err != nil {
@@ -605,9 +611,18 @@ func archiveSourceLocation(cfg config.Config) string {
 	return cfg.DBPath
 }
 
-func slackTUIRows(rows []store.MessageRow) []tui.Row {
+func slackTUIRows(rows []store.MessageRow, includeDrafts bool, includeSystem bool, limit int) []tui.Row {
+	if limit <= 0 {
+		limit = len(rows)
+	}
 	items := make([]tui.Row, 0, len(rows))
 	for _, row := range rows {
+		if !includeDrafts && slackIsDraft(row) {
+			continue
+		}
+		if !includeSystem && slackIsNoisySystem(row) {
+			continue
+		}
 		title := strings.TrimSpace(row.NormalizedText)
 		if title == "" {
 			title = strings.TrimSpace(row.Text)
@@ -647,8 +662,24 @@ func slackTUIRows(rows []store.MessageRow) []tui.Row {
 				"user_id":      row.UserID,
 			},
 		})
+		if len(items) >= limit {
+			break
+		}
 	}
 	return items
+}
+
+func slackIsDraft(row store.MessageRow) bool {
+	return strings.EqualFold(strings.TrimSpace(row.Subtype), "desktop_draft") || strings.HasPrefix(strings.TrimSpace(row.TS), "draft:")
+}
+
+func slackIsNoisySystem(row store.MessageRow) bool {
+	switch strings.ToLower(strings.TrimSpace(row.Subtype)) {
+	case "channel_archive", "channel_join", "channel_leave", "channel_name", "channel_purpose", "channel_topic", "channel_unarchive", "group_join", "group_leave":
+		return true
+	default:
+		return false
+	}
 }
 
 func slackWorkspaceScope(row store.MessageRow) string {
