@@ -531,8 +531,8 @@ limit ?
 
 func (s *Store) Messages(ctx context.Context, workspaceID string, channelID string, userID string, limit int) ([]MessageRow, error) {
 	query := `
-select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
-       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
+	select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+	       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
        m.text, m.normalized_text, m.thread_ts, m.reply_count, m.latest_reply, m.subtype, m.source_name
 from messages m
 left join workspaces w on w.id = m.workspace_id
@@ -564,6 +564,115 @@ where 1=1`
 		return nil, err
 	}
 	return out, s.resolveMessageRowMentions(ctx, out)
+}
+
+func (s *Store) MessagesWithThreadContext(ctx context.Context, workspaceID string, channelID string, userID string, limit int) ([]MessageRow, error) {
+	rows, err := s.Messages(ctx, workspaceID, channelID, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return s.hydrateThreadContext(ctx, rows, limit)
+}
+
+func (s *Store) hydrateThreadContext(ctx context.Context, rows []MessageRow, limit int) ([]MessageRow, error) {
+	if len(rows) == 0 {
+		return rows, nil
+	}
+	type threadRef struct {
+		workspaceID string
+		channelID   string
+		threadTS    string
+	}
+	refs := make([]threadRef, 0)
+	seenRefs := map[string]struct{}{}
+	for _, row := range rows {
+		threadTS := slackThreadRootTS(row)
+		if threadTS == "" {
+			continue
+		}
+		key := row.WorkspaceID + "\x00" + row.ChannelID + "\x00" + threadTS
+		if _, ok := seenRefs[key]; ok {
+			continue
+		}
+		seenRefs[key] = struct{}{}
+		refs = append(refs, threadRef{workspaceID: row.WorkspaceID, channelID: row.ChannelID, threadTS: threadTS})
+	}
+	if len(refs) == 0 {
+		return rows, nil
+	}
+	clauses := make([]string, 0, len(refs))
+	args := make([]any, 0, len(refs)*4+1)
+	for _, ref := range refs {
+		clauses = append(clauses, `(m.workspace_id = ? and m.channel_id = ? and (m.ts = ? or m.thread_ts = ?))`)
+		args = append(args, ref.workspaceID, ref.channelID, ref.threadTS, ref.threadTS)
+	}
+	contextLimit := limit * 5
+	if contextLimit < len(rows) {
+		contextLimit = len(rows)
+	}
+	if contextLimit < 200 {
+		contextLimit = 200
+	}
+	if contextLimit > 2000 {
+		contextLimit = 2000
+	}
+	query := `
+select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
+       m.text, m.normalized_text, m.thread_ts, m.reply_count, m.latest_reply, m.subtype, m.source_name
+from messages m
+left join workspaces w on w.id = m.workspace_id
+left join channels c on c.id = m.channel_id
+left join users u on u.id = m.user_id
+where ` + strings.Join(clauses, " or ") + `
+order by m.ts desc
+limit ?`
+	args = append(args, contextLimit)
+	contextRows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer contextRows.Close()
+	extra, err := scanMessageRows(contextRows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.resolveMessageRowMentions(ctx, extra); err != nil {
+		return nil, err
+	}
+	return mergeMessageRows(rows, extra), nil
+}
+
+func slackThreadRootTS(row MessageRow) string {
+	threadTS := strings.TrimSpace(row.ThreadTS)
+	ts := strings.TrimSpace(row.TS)
+	if threadTS != "" {
+		return threadTS
+	}
+	if row.ReplyCount > 0 || strings.TrimSpace(row.LatestReply) != "" {
+		return ts
+	}
+	return ""
+}
+
+func mergeMessageRows(primary, extra []MessageRow) []MessageRow {
+	out := make([]MessageRow, 0, len(primary)+len(extra))
+	seen := map[string]struct{}{}
+	appendRow := func(row MessageRow) {
+		key := row.WorkspaceID + "\x00" + row.ChannelID + "\x00" + row.TS
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, row)
+	}
+	for _, row := range primary {
+		appendRow(row)
+	}
+	for _, row := range extra {
+		appendRow(row)
+	}
+	return out
 }
 
 func (s *Store) resolveMessageRowMentions(ctx context.Context, rows []MessageRow) error {

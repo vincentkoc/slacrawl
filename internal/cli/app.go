@@ -573,7 +573,7 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 		if !*includeDrafts || !*includeSystem {
 			queryLimit = store.RequireLimit(*limit * 10)
 		}
-		rows, err := st.Messages(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, queryLimit)
+		rows, err := st.MessagesWithThreadContext(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, queryLimit)
 		if err != nil {
 			return nil, err
 		}

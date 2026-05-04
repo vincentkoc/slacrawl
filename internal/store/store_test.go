@@ -115,6 +115,34 @@ func TestMessagesResolveMentionDisplayNames(t *testing.T) {
 	require.Equal(t, "<@U1> please check this", rows[0].Text)
 }
 
+func TestMessagesWithThreadContextHydratesOlderRoot(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, s.UpsertWorkspace(ctx, Workspace{ID: "T1", Name: "team", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertChannel(ctx, Channel{ID: "C1", WorkspaceID: "T1", Name: "eng", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertMessage(ctx, Message{
+		ChannelID: "C1", TS: "1000.000001", WorkspaceID: "T1", UserID: "U1",
+		ThreadTS: "1000.000001", Text: "root", NormalizedText: "root", ReplyCount: 1, LatestReply: "2000.000001",
+		SourceRank: 2, SourceName: "api-bot", RawJSON: "{}", UpdatedAt: now,
+	}, nil))
+	require.NoError(t, s.UpsertMessage(ctx, Message{
+		ChannelID: "C1", TS: "2000.000001", WorkspaceID: "T1", UserID: "U2",
+		ThreadTS: "1000.000001", Text: "reply", NormalizedText: "reply",
+		SourceRank: 2, SourceName: "api-bot", RawJSON: "{}", UpdatedAt: now,
+	}, nil))
+
+	rows, err := s.MessagesWithThreadContext(ctx, "T1", "", "", 1)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Equal(t, "2000.000001", rows[0].TS)
+	require.Equal(t, "1000.000001", rows[1].TS)
+}
+
 func TestWorkspaceFiltersApplyToReadQueries(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	s, err := Open(dbPath)
