@@ -341,7 +341,7 @@ func (a *App) runStatus(ctx context.Context, configPath string, args []string, f
 	if fs.NArg() != 0 {
 		return errors.New("status takes flags only")
 	}
-	cfg, err := loadConfig(configPath)
+	cfg, err := loadConfigOrDefault(configPath)
 	if err != nil {
 		return err
 	}
@@ -556,7 +556,7 @@ func (a *App) runTUI(ctx context.Context, configPath string, args []string, form
 	if *limit <= 0 {
 		return errors.New("tui --limit must be positive")
 	}
-	cfg, err := loadConfig(configPath)
+	cfg, err := loadConfigOrDefault(configPath)
 	if err != nil {
 		return err
 	}

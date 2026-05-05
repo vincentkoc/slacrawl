@@ -529,6 +529,37 @@ func TestTUIHelpReturnsUsage(t *testing.T) {
 	require.Empty(t, stderr.String())
 }
 
+func TestStatusJSONUsesDefaultsWhenConfigMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	configPath := filepath.Join(tmp, "missing.toml")
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "status", "--json"}))
+
+	var status map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	require.Equal(t, "crawlkit.control.v1", status["schema_version"])
+	require.Equal(t, "slacrawl", status["app_id"])
+	require.NoFileExists(t, configPath)
+}
+
+func TestTUIJSONUsesDefaultsWhenConfigMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	configPath := filepath.Join(tmp, "missing.toml")
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "tui", "--json"}))
+
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows))
+	require.Empty(t, rows)
+	require.NoFileExists(t, configPath)
+}
+
 func TestTUIJSONListsMessages(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.toml")
