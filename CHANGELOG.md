@@ -4,6 +4,8 @@
 
 - Add a repo-local `slacrawl` agent skill for local Slack archive, freshness,
   query, and verification workflows.
+- Document `slacrawl sql` read-only query examples in the repo-local agent
+  skill so agents can do exact archive counts and rankings safely.
 - Replace the single validation workflow with CI jobs for dependencies,
   formatting/vet, tests, CLI control-surface smoke checks, and GoReleaser
   snapshot builds.

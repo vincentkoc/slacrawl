@@ -72,6 +72,22 @@ slacrawl mentions --limit 50
 slacrawl sql 'select count(*) from messages;'
 ```
 
+## SQL
+
+Use `slacrawl sql` for exact counts, joins, and ranking queries when normal
+CLI reads are too coarse. The command is read-only and accepts SQL as args or
+stdin. Prefer `--json` for agent parsing.
+
+Useful examples:
+
+```bash
+slacrawl --json sql 'select count(*) as messages from messages;'
+slacrawl --json sql "select coalesce(nullif(c.name, ''), m.channel_id) as channel, count(*) as messages from messages m left join channels c on c.id = m.channel_id and c.workspace_id = m.workspace_id group by m.workspace_id, m.channel_id order by messages desc limit 20;"
+slacrawl --json sql "select coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), m.user_id) as author, count(*) as messages from messages m left join users u on u.id = m.user_id and u.workspace_id = m.workspace_id group by m.workspace_id, m.user_id order by messages desc limit 20;"
+```
+
+Keep SQL to `select`/`with` reads. Do not use SQL to mutate the archive.
+
 When the installed CLI lacks a new feature, build or run from
 `~/GIT/_Perso/slacrawl` before concluding the feature is missing.
 
