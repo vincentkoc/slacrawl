@@ -2,6 +2,11 @@
 
 `slacrawl` is configured with TOML at `~/.slacrawl/config.toml` by default.
 
+Config path resolution, runtime directories, status payloads, and token
+diagnostic formatting are normalized through `crawlkit`. Slack token scopes,
+workspace selection, API/Desktop source behavior, and schema compatibility stay
+in `slacrawl`.
+
 The config is designed to work with safe defaults:
 
 - SQLite lives under `~/.slacrawl/`

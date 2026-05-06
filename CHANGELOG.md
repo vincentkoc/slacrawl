@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Depend on `github.com/vincentkoc/crawlkit v0.4.0` for shared config,
+  status/control, snapshot, mirror, state, output, and terminal explorer
+  mechanics.
+- Keep Slack API/Desktop parsing, token scopes, Slack schema, Slack text
+  normalization, channel/thread semantics, and analytics app-owned while the
+  shared mechanics move to crawlkit.
+- Document the gitcrawl-style TUI shape: workspace/channel/person groups,
+  message rows, message/thread detail, sorting, mouse selection, right-click
+  actions, and local/remote status chrome.
 - Add crawlkit control metadata/status surfaces with command-local `metadata --json`, `status --json`, and `doctor --json`.
 - Keep status, doctor, and TUI reads safe for fresh or missing local databases without triggering git-share auto-update.
 - Add `slacrawl tui`, a terminal archive browser for stored Slack messages using the shared `crawlkit/tui` package.

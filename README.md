@@ -175,9 +175,24 @@ Choose the path that matches your setup:
 - `users` lists synced users
 - `channels` lists synced channels
 - `status` prints workspace and sync status
+- `metadata --json`, `status --json`, and `doctor --json` expose crawlkit
+  control/status payloads for launchers, automation, and CI
 - `digest` prints a per-channel activity summary for a time window
 - `analytics` groups analytics subcommands (`digest`, `quiet`, `trends`)
 - `completion` prints shell completion for `bash` or `zsh`
+
+## Shared crawlkit surfaces
+
+`slacrawl` uses `crawlkit` for standard config paths, SQLite open/read helpers,
+snapshot packing/import, git-backed archive sharing, sync-state helpers, output
+formatting, and the shared terminal explorer. Slack API sync, Slack Desktop
+parsing, token scopes, Slack text normalization, and the SQLite schema remain
+owned by `slacrawl`.
+
+The TUI follows the gitcrawl-style three-pane model: workspace/channel/person
+groups on the left, messages in the middle, and readable message/thread detail
+on the right. It supports pane focus, sortable headers, mouse selection,
+right-click actions, and a local/remote footer.
 
 ## Importing a Slack Export
 
