@@ -1,0 +1,12 @@
+# Protect ownership and automation rules.
+/.github/CODEOWNERS @vincentkoc
+/.github/dependabot.yml @vincentkoc
+/.github/release-drafter.yml @vincentkoc
+/.github/workflows/ @vincentkoc
+
+# Release and package integrity surfaces.
+/.goreleaser.yml @vincentkoc
+/go.mod @vincentkoc
+/go.sum @vincentkoc
+/scripts/*release* @vincentkoc
+/scripts/*publish* @vincentkoc
