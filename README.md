@@ -232,6 +232,10 @@ make completion
 
 Completion files are generated into `dist/completions/`.
 
+CI runs dependency verification, `gofmt`, `go vet`, tests, CLI control-surface
+smokes (`--version`, `metadata --json`, `status --json`, `tui --json`), a
+GoReleaser snapshot build, and CodeQL.
+
 ## Shell Completion
 
 Generate completion scripts with:

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Replace the single validation workflow with CI jobs for dependencies,
+  formatting/vet, tests, CLI control-surface smoke checks, and GoReleaser
+  snapshot builds.
+- Add CodeQL analysis on pull requests, `main`, the crawlkit integration branch,
+  weekly schedule, and manual dispatch.
 - Depend on `github.com/vincentkoc/crawlkit v0.4.0` for shared config,
   status/control, snapshot, mirror, state, output, and terminal explorer
   mechanics.
