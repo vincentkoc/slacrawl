@@ -3,7 +3,7 @@ module github.com/vincentkoc/slacrawl
 go 1.26.2
 
 require (
-	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db
+	github.com/golang/snappy v1.0.0
 	github.com/slack-go/slack v0.17.3
 	github.com/stretchr/testify v1.11.1
 	github.com/syndtr/goleveldb v1.0.0
