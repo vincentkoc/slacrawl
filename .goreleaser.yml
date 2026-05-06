@@ -17,7 +17,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w
+      - -s -w -X github.com/vincentkoc/slacrawl/internal/cli.version={{ .Version }}
 
 archives:
   - id: bundles

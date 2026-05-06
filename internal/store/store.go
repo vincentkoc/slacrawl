@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	crawlstore "github.com/vincentkoc/crawlkit/store"
 )
 
 const schemaVersion = 2
@@ -206,13 +206,19 @@ type Status struct {
 
 type MessageRow struct {
 	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceName  string `json:"workspace_name,omitempty"`
 	ChannelID      string `json:"channel_id"`
+	ChannelName    string `json:"channel_name,omitempty"`
 	TS             string `json:"ts"`
 	UserID         string `json:"user_id"`
+	UserName       string `json:"user_name,omitempty"`
 	Text           string `json:"text"`
 	NormalizedText string `json:"normalized_text"`
 	ThreadTS       string `json:"thread_ts"`
+	ReplyCount     int    `json:"reply_count"`
+	LatestReply    string `json:"latest_reply"`
 	Subtype        string `json:"subtype"`
+	SourceName     string `json:"source_name,omitempty"`
 }
 
 type MentionRow struct {
@@ -222,6 +228,11 @@ type MentionRow struct {
 	MentionType string `json:"mention_type"`
 	TargetID    string `json:"target_id"`
 	DisplayText string `json:"display_text"`
+}
+
+type messageMentionDisplay struct {
+	target  string
+	display string
 }
 
 type UserRow struct {
@@ -253,33 +264,47 @@ type SyncStateRow struct {
 }
 
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", path)
+	base, err := crawlstore.Open(context.Background(), crawlstore.Options{Path: path})
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db := base.DB()
 	currentVersion, err := readSchemaVersion(db)
 	if err != nil {
-		_ = db.Close()
+		_ = base.Close()
 		return nil, err
 	}
 	if currentVersion > schemaVersion {
-		_ = db.Close()
+		_ = base.Close()
 		return nil, fmt.Errorf("database schema version %d is newer than this slacrawl build supports (%d)", currentVersion, schemaVersion)
 	}
 	if _, err := db.Exec(schema); err != nil {
-		_ = db.Close()
+		_ = base.Close()
 		return nil, err
 	}
 	if currentVersion != schemaVersion {
 		if err := writeSchemaVersion(db, schemaVersion); err != nil {
-			_ = db.Close()
+			_ = base.Close()
 			return nil, err
 		}
+	}
+	return &Store{db: db}, nil
+}
+
+func OpenReadOnly(path string) (*Store, error) {
+	base, err := crawlstore.OpenReadOnly(context.Background(), path)
+	if err != nil {
+		return nil, err
+	}
+	db := base.DB()
+	currentVersion, err := readSchemaVersion(db)
+	if err != nil {
+		_ = base.Close()
+		return nil, err
+	}
+	if currentVersion > schemaVersion {
+		_ = base.Close()
+		return nil, fmt.Errorf("database schema version %d is newer than this slacrawl build supports (%d)", currentVersion, schemaVersion)
 	}
 	return &Store{db: db}, nil
 }
@@ -479,9 +504,14 @@ func (s *Store) Status(ctx context.Context) (Status, error) {
 
 func (s *Store) Search(ctx context.Context, workspaceID string, query string, limit int) ([]MessageRow, error) {
 	sqlQuery := `
-select m.workspace_id, m.channel_id, m.ts, m.user_id, m.text, m.normalized_text, m.thread_ts, m.subtype
+select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
+       m.text, m.normalized_text, m.thread_ts, m.reply_count, m.latest_reply, m.subtype, m.source_name
 from message_fts f
 join messages m on f.message_key = m.channel_id || '|' || m.ts
+left join workspaces w on w.id = m.workspace_id
+left join channels c on c.id = m.channel_id
+left join users u on u.id = m.user_id
 where message_fts match ?
   and (? = '' or m.workspace_id = ?)
 order by m.ts desc
@@ -492,35 +522,248 @@ limit ?
 		return nil, err
 	}
 	defer rows.Close()
-	return scanMessageRows(rows)
+	out, err := scanMessageRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, s.resolveMessageRowMentions(ctx, out)
 }
 
 func (s *Store) Messages(ctx context.Context, workspaceID string, channelID string, userID string, limit int) ([]MessageRow, error) {
 	query := `
-select workspace_id, channel_id, ts, user_id, text, normalized_text, thread_ts, subtype
-from messages
+	select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+	       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
+       m.text, m.normalized_text, m.thread_ts, m.reply_count, m.latest_reply, m.subtype, m.source_name
+from messages m
+left join workspaces w on w.id = m.workspace_id
+left join channels c on c.id = m.channel_id
+left join users u on u.id = m.user_id
 where 1=1`
 	args := []any{}
 	if workspaceID != "" {
-		query += ` and workspace_id = ?`
+		query += ` and m.workspace_id = ?`
 		args = append(args, workspaceID)
 	}
 	if channelID != "" {
-		query += ` and channel_id = ?`
+		query += ` and m.channel_id = ?`
 		args = append(args, channelID)
 	}
 	if userID != "" {
-		query += ` and user_id = ?`
+		query += ` and m.user_id = ?`
 		args = append(args, userID)
 	}
-	query += ` order by ts desc limit ?`
+	query += ` order by m.ts desc limit ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanMessageRows(rows)
+	out, err := scanMessageRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, s.resolveMessageRowMentions(ctx, out)
+}
+
+func (s *Store) MessagesWithThreadContext(ctx context.Context, workspaceID string, channelID string, userID string, limit int) ([]MessageRow, error) {
+	rows, err := s.Messages(ctx, workspaceID, channelID, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return s.hydrateThreadContext(ctx, rows, limit)
+}
+
+func (s *Store) hydrateThreadContext(ctx context.Context, rows []MessageRow, limit int) ([]MessageRow, error) {
+	if len(rows) == 0 {
+		return rows, nil
+	}
+	type threadRef struct {
+		workspaceID string
+		channelID   string
+		threadTS    string
+	}
+	refs := make([]threadRef, 0)
+	seenRefs := map[string]struct{}{}
+	for _, row := range rows {
+		threadTS := slackThreadRootTS(row)
+		if threadTS == "" {
+			continue
+		}
+		key := row.WorkspaceID + "\x00" + row.ChannelID + "\x00" + threadTS
+		if _, ok := seenRefs[key]; ok {
+			continue
+		}
+		seenRefs[key] = struct{}{}
+		refs = append(refs, threadRef{workspaceID: row.WorkspaceID, channelID: row.ChannelID, threadTS: threadTS})
+	}
+	if len(refs) == 0 {
+		return rows, nil
+	}
+	clauses := make([]string, 0, len(refs))
+	args := make([]any, 0, len(refs)*4+1)
+	for _, ref := range refs {
+		clauses = append(clauses, `(m.workspace_id = ? and m.channel_id = ? and (m.ts = ? or m.thread_ts = ?))`)
+		args = append(args, ref.workspaceID, ref.channelID, ref.threadTS, ref.threadTS)
+	}
+	contextLimit := limit * 5
+	if contextLimit < len(rows) {
+		contextLimit = len(rows)
+	}
+	if contextLimit < 200 {
+		contextLimit = 200
+	}
+	if contextLimit > 2000 {
+		contextLimit = 2000
+	}
+	query := `
+select m.workspace_id, coalesce(w.name, ''), m.channel_id, coalesce(c.name, ''), m.ts, m.user_id,
+       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), ''),
+       m.text, m.normalized_text, m.thread_ts, m.reply_count, m.latest_reply, m.subtype, m.source_name
+from messages m
+left join workspaces w on w.id = m.workspace_id
+left join channels c on c.id = m.channel_id
+left join users u on u.id = m.user_id
+where ` + strings.Join(clauses, " or ") + `
+order by m.ts desc
+limit ?`
+	args = append(args, contextLimit)
+	contextRows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer contextRows.Close()
+	extra, err := scanMessageRows(contextRows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.resolveMessageRowMentions(ctx, extra); err != nil {
+		return nil, err
+	}
+	return mergeMessageRows(rows, extra), nil
+}
+
+func slackThreadRootTS(row MessageRow) string {
+	threadTS := strings.TrimSpace(row.ThreadTS)
+	ts := strings.TrimSpace(row.TS)
+	if threadTS != "" {
+		return threadTS
+	}
+	if row.ReplyCount > 0 || strings.TrimSpace(row.LatestReply) != "" {
+		return ts
+	}
+	return ""
+}
+
+func mergeMessageRows(primary, extra []MessageRow) []MessageRow {
+	out := make([]MessageRow, 0, len(primary)+len(extra))
+	seen := map[string]struct{}{}
+	appendRow := func(row MessageRow) {
+		key := row.WorkspaceID + "\x00" + row.ChannelID + "\x00" + row.TS
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, row)
+	}
+	for _, row := range primary {
+		appendRow(row)
+	}
+	for _, row := range extra {
+		appendRow(row)
+	}
+	return out
+}
+
+func (s *Store) resolveMessageRowMentions(ctx context.Context, rows []MessageRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	byKey := map[string][]messageMentionDisplay{}
+	keys := make([]string, 0, len(rows))
+	seen := map[string]struct{}{}
+	for _, row := range rows {
+		key := messageKey(row.ChannelID, row.TS)
+		if strings.TrimSpace(key) == "|" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	for start := 0; start < len(keys); start += 400 {
+		end := min(start+400, len(keys))
+		placeholders := strings.TrimRight(strings.Repeat("?,", end-start), ",")
+		query := `
+select mm.channel_id, mm.ts, mm.target_id,
+       coalesce(nullif(u.display_name, ''), nullif(u.real_name, ''), nullif(u.name, ''), nullif(mm.display_text, ''), '')
+from message_mentions mm
+left join users u on u.id = mm.target_id
+where mm.mention_type = 'user'
+  and (mm.channel_id || '|' || mm.ts) in (` + placeholders + `)
+`
+		args := make([]any, 0, end-start)
+		for _, key := range keys[start:end] {
+			args = append(args, key)
+		}
+		mentionRows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		for mentionRows.Next() {
+			var channelID, ts, target, display string
+			if err := mentionRows.Scan(&channelID, &ts, &target, &display); err != nil {
+				_ = mentionRows.Close()
+				return err
+			}
+			display = strings.TrimSpace(display)
+			target = strings.TrimSpace(target)
+			if target == "" || display == "" || strings.EqualFold(display, target) {
+				continue
+			}
+			key := messageKey(channelID, ts)
+			byKey[key] = append(byKey[key], messageMentionDisplay{target: target, display: display})
+		}
+		if err := mentionRows.Close(); err != nil {
+			return err
+		}
+	}
+	for index := range rows {
+		key := messageKey(rows[index].ChannelID, rows[index].TS)
+		mentions := byKey[key]
+		if len(mentions) == 0 {
+			continue
+		}
+		rows[index].NormalizedText = replaceUserMentions(rows[index].NormalizedText, mentions)
+	}
+	return nil
+}
+
+func replaceUserMentions(value string, mentions []messageMentionDisplay) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(mentions) == 0 {
+		return value
+	}
+	ordered := append([]messageMentionDisplay(nil), mentions...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return len(ordered[i].target) > len(ordered[j].target)
+	})
+	for _, mention := range ordered {
+		target := strings.TrimSpace(mention.target)
+		display := strings.TrimSpace(mention.display)
+		if target == "" || display == "" || strings.EqualFold(target, display) {
+			continue
+		}
+		if !strings.HasPrefix(display, "@") {
+			display = "@" + display
+		}
+		value = regexp.MustCompile(`<@`+regexp.QuoteMeta(target)+`(?:\|[^>]+)?>`).ReplaceAllString(value, display)
+		value = strings.ReplaceAll(value, "@"+target, display)
+		value = strings.ReplaceAll(value, "@"+strings.ToLower(target), display)
+	}
+	return value
 }
 
 func (s *Store) Mentions(ctx context.Context, workspaceID string, target string, limit int) ([]MentionRow, error) {
@@ -756,7 +999,7 @@ func scanMessageRows(rows *sql.Rows) ([]MessageRow, error) {
 	var out []MessageRow
 	for rows.Next() {
 		var row MessageRow
-		if err := rows.Scan(&row.WorkspaceID, &row.ChannelID, &row.TS, &row.UserID, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.Subtype); err != nil {
+		if err := rows.Scan(&row.WorkspaceID, &row.WorkspaceName, &row.ChannelID, &row.ChannelName, &row.TS, &row.UserID, &row.UserName, &row.Text, &row.NormalizedText, &row.ThreadTS, &row.ReplyCount, &row.LatestReply, &row.Subtype, &row.SourceName); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
@@ -783,7 +1026,7 @@ func eventType(message Message) string {
 }
 
 func messageKey(channelID string, ts string) string {
-	return channelID + "|" + ts
+	return strings.TrimSpace(channelID) + "|" + strings.TrimSpace(ts)
 }
 
 func stringifyDBValue(value any) any {

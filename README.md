@@ -36,6 +36,7 @@ Data stays on your machine. You can run it in API mode, desktop mode, or a hybri
 - optional Socket Mode live tailing via app token
 - periodic desktop refresh with `watch`
 - git-backed archive publishing, subscription, and read-time auto-refresh
+- terminal archive browser for fast local message inspection
 
 ## Current Coverage
 
@@ -167,15 +168,31 @@ Choose the path that matches your setup:
 - `tail` listens for live events through Socket Mode, including one tail per configured workspace
 - `watch` refreshes desktop-local state on a schedule
 - `search` runs local FTS queries, optionally filtered by workspace
+- `tui` opens the terminal archive browser for stored messages
 - `messages` lists stored messages with filters
 - `mentions` lists structured mention records
 - `sql` runs read-only SQL against the local database
 - `users` lists synced users
 - `channels` lists synced channels
 - `status` prints workspace and sync status
+- `metadata --json`, `status --json`, and `doctor --json` expose crawlkit
+  control/status payloads for launchers, automation, and CI
 - `digest` prints a per-channel activity summary for a time window
 - `analytics` groups analytics subcommands (`digest`, `quiet`, `trends`)
 - `completion` prints shell completion for `bash` or `zsh`
+
+## Shared crawlkit surfaces
+
+`slacrawl` uses `crawlkit` for standard config paths, SQLite open/read helpers,
+snapshot packing/import, git-backed archive sharing, sync-state helpers, output
+formatting, and the shared terminal explorer. Slack API sync, Slack Desktop
+parsing, token scopes, Slack text normalization, and the SQLite schema remain
+owned by `slacrawl`.
+
+The TUI follows the gitcrawl-style three-pane model: workspace/channel/person
+groups on the left, messages in the middle, and readable message/thread detail
+on the right. It supports pane focus, sortable headers, mouse selection,
+right-click actions, and a local/remote footer.
 
 ## Importing a Slack Export
 
@@ -214,6 +231,10 @@ make completion
 ```
 
 Completion files are generated into `dist/completions/`.
+
+CI runs dependency verification, `gofmt`, `go vet`, tests, CLI control-surface
+smokes (`--version`, `metadata --json`, `status --json`, `tui --json`), a
+GoReleaser snapshot build, and CodeQL.
 
 ## Shell Completion
 
@@ -420,6 +441,7 @@ go run ./cmd/slacrawl sql 'select channel_id, count(*) as messages from messages
 ```bash
 go test ./...
 go build ./cmd/slacrawl
+go run ./cmd/slacrawl --help | grep tui
 ```
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for contribution workflow and [`SPEC.md`](./SPEC.md) for the implementation contract.

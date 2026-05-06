@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/vincentkoc/slacrawl/internal/config"
 	"github.com/vincentkoc/slacrawl/internal/slackapi"
@@ -28,6 +29,7 @@ type Options struct {
 	LatestOnly      bool
 	Concurrency     int
 	AutoJoin        *bool
+	Logger          *slog.Logger
 }
 
 type Summary struct {
@@ -41,7 +43,7 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, opts Options) 
 func RunWithTokens(ctx context.Context, cfg config.Config, st *store.Store, opts Options, tokens config.Tokens) (Summary, error) {
 	summary := Summary{}
 	includeDMs := cfg.IncludeDMsResolved(tokens.User != "")
-	apiClient := slackapi.New(tokens).WithIncludeDMs(includeDMs)
+	apiClient := slackapi.New(tokens).WithIncludeDMs(includeDMs).WithLogger(opts.Logger)
 
 	switch opts.Source {
 	case SourceAPI:

@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feat/use-crawlkit
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify module cache
+        run: go mod verify
+
+      - name: Check go.mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+
+      - name: Run govulncheck
+        run: '"$(go env GOPATH)/bin/govulncheck" ./...'
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: |
+          changed="$(gofmt -l .)"
+          if [ -n "$changed" ]; then
+            printf 'gofmt wants changes in:\n%s\n' "$changed"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Build CLI
+        run: go build -ldflags "-X github.com/vincentkoc/slacrawl/internal/cli.version=ci" -o bin/slacrawl ./cmd/slacrawl
+
+      - name: Smoke test CLI control surface
+        run: |
+          set -euo pipefail
+          output="$(./bin/slacrawl --help 2>&1 || true)"
+          printf '%s\n' "$output"
+          printf '%s' "$output" | grep -q "Usage of slacrawl:"
+          printf '%s' "$output" | grep -q "metadata"
+          printf '%s' "$output" | grep -q "tui"
+          test "$(./bin/slacrawl --version)" = "ci"
+          ./bin/slacrawl metadata --json | grep -q '"schema_version"'
+          cfg="$RUNNER_TEMP/slacrawl.toml"
+          db="$RUNNER_TEMP/slacrawl.db"
+          ./bin/slacrawl --config "$cfg" init --db "$db"
+          ./bin/slacrawl --config "$cfg" status --json | grep -q '"databases"'
+          ./bin/slacrawl --config "$cfg" tui --json --limit 1 | grep -q '^\['
+
+  release-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Snapshot release build
+        uses: goreleaser/goreleaser-action@v7.2.1
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish

@@ -7,12 +7,16 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/vincentkoc/crawlkit/control"
+	"github.com/vincentkoc/crawlkit/tui"
 	"github.com/vincentkoc/slacrawl/internal/config"
 	"github.com/vincentkoc/slacrawl/internal/report"
 	"github.com/vincentkoc/slacrawl/internal/share"
@@ -38,6 +42,8 @@ const (
 	FormatLog  OutputFormat = "log"
 )
 
+var version = "dev"
+
 func New() *App {
 	return &App{
 		Stdout: os.Stdout,
@@ -53,6 +59,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	format := global.String("format", string(FormatText), "output format: text|json|log")
 	jsonOut := global.Bool("json", false, "json output")
 	noColor := global.Bool("no-color", false, "disable ANSI color in text output")
+	versionFlag := global.Bool("version", false, "print version")
 	if err := global.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			a.setColorEnabled(FormatText, *noColor)
@@ -63,6 +70,10 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	}
 
 	rest := global.Args()
+	if *versionFlag {
+		_, err := fmt.Fprintln(a.Stdout, version)
+		return err
+	}
 	if len(rest) == 0 {
 		a.setColorEnabled(FormatText, *noColor)
 		a.printHelp()
@@ -85,11 +96,20 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	a.outputFormat = outputFormat
 	a.setColorEnabled(outputFormat, *noColor)
 
+	if rest[0] == "help" {
+		a.printHelp()
+		return nil
+	}
+
 	switch rest[0] {
+	case "version":
+		return a.writeOutput("Version", map[string]string{"version": version}, outputFormat, false)
+	case "metadata":
+		return a.runMetadata(rest[1:], outputFormat)
 	case "init":
 		return a.runInit(*configPath, rest[1:], outputFormat)
 	case "doctor":
-		return a.runDoctor(ctx, *configPath, outputFormat)
+		return a.runDoctor(ctx, *configPath, rest[1:], outputFormat)
 	case "report":
 		return a.runReport(ctx, *configPath, outputFormat)
 	case "digest":
@@ -110,6 +130,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runImport(ctx, rest[1:])
 	case "search":
 		return a.runSearch(ctx, *configPath, rest[1:], outputFormat)
+	case "tui":
+		return a.runTUI(ctx, *configPath, rest[1:], outputFormat)
 	case "messages":
 		return a.runMessages(ctx, *configPath, rest[1:], outputFormat)
 	case "mentions":
@@ -202,16 +224,26 @@ func (a *App) runInit(configPath string, args []string, format OutputFormat) err
 	return a.writeOutput("Init", result, format, true)
 }
 
-func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFormat) error {
+func (a *App) runDoctor(ctx context.Context, configPath string, args []string, format OutputFormat) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	jsonOut := fs.Bool("json", false, "write doctor JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if *jsonOut {
+		format = FormatJSON
+	}
+	if fs.NArg() != 0 {
+		return errors.New("doctor takes flags only")
+	}
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DBPath)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
 
 	tokens := cfg.ResolveTokens()
 	diag, err := slackapi.New(tokens).WithIncludeDMs(cfg.IncludeDMsResolved(tokens.User != "")).Doctor(ctx)
@@ -236,24 +268,34 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 	if threadCoverage == "" {
 		threadCoverage = "partial"
 	}
-	if err := st.SetSyncState(ctx, "doctor", "threads", "coverage", threadCoverage); err != nil {
-		return err
-	}
-	status, err := st.Status(ctx)
+
+	var status store.Status
+	var channelSkips []store.SyncStateRow
+	var tailState []store.SyncStateRow
+	shareState := shareStateFromConfig(cfg)
+	st, err := store.OpenReadOnly(cfg.DBPath)
 	if err != nil {
-		return err
-	}
-	shareState, err := a.buildShareState(ctx, cfg, st)
-	if err != nil {
-		return err
-	}
-	channelSkips, err := st.ListSyncState(ctx, "api-bot", "channel_skip", 20)
-	if err != nil {
-		return err
-	}
-	tailState, err := st.ListSyncState(ctx, "tail", "", 20)
-	if err != nil {
-		return err
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else {
+		defer st.Close()
+		status, err = st.Status(ctx)
+		if err != nil {
+			return err
+		}
+		shareState, err = a.buildShareState(ctx, cfg, st)
+		if err != nil {
+			return err
+		}
+		channelSkips, err = st.ListSyncState(ctx, "api-bot", "channel_skip", 20)
+		if err != nil {
+			return err
+		}
+		tailState, err = st.ListSyncState(ctx, "tail", "", 20)
+		if err != nil {
+			return err
+		}
 	}
 
 	report := map[string]any{
@@ -272,6 +314,7 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 		},
 		"slack_api":         diag,
 		"workspace_api":     workspaceAPI,
+		"thread_coverage":   threadCoverage,
 		"desktop_source":    desktop,
 		"share":             shareState,
 		"api_channel_skips": channelSkips,
@@ -285,30 +328,94 @@ func (a *App) runDoctor(ctx context.Context, configPath string, format OutputFor
 func (a *App) runStatus(ctx context.Context, configPath string, args []string, format OutputFormat) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(a.Stderr)
+	jsonOut := fs.Bool("json", false, "write crawlkit status JSON")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
 	}
-	cfg, err := loadConfig(configPath)
+	if *jsonOut {
+		format = FormatJSON
+	}
+	if fs.NArg() != 0 {
+		return errors.New("status takes flags only")
+	}
+	cfg, err := loadConfigOrDefault(configPath)
 	if err != nil {
 		return err
 	}
-	st, err := a.openReadableStore(ctx, cfg)
+	var status store.Status
+	shareState := shareStateFromConfig(cfg)
+	st, err := store.OpenReadOnly(cfg.DBPath)
 	if err != nil {
-		return err
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else {
+		defer st.Close()
+		status, err = st.Status(ctx)
+		if err != nil {
+			return err
+		}
+		shareState, err = a.buildShareState(ctx, cfg, st)
+		if err != nil {
+			return err
+		}
 	}
-	defer st.Close()
-	status, err := st.Status(ctx)
-	if err != nil {
-		return err
-	}
-	shareState, err := a.buildShareState(ctx, cfg, st)
-	if err != nil {
-		return err
+	if format == FormatJSON {
+		return a.writeJSON(controlStatus("slacrawl", configPath, cfg, status, shareState))
 	}
 	return a.writeOutput("Status", statusResponse{Status: status, Share: shareState}, format, true)
+}
+
+func (a *App) runMetadata(args []string, format OutputFormat) error {
+	fs := flag.NewFlagSet("metadata", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	jsonOut := fs.Bool("json", false, "write crawlkit metadata JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if *jsonOut {
+		format = FormatJSON
+	}
+	if fs.NArg() != 0 {
+		return errors.New("metadata takes flags only")
+	}
+	defaults := config.Default()
+	configPath, err := config.DefaultConfigPath()
+	if err != nil {
+		return err
+	}
+	manifest := control.NewManifest("slacrawl", "Slack Crawl", "slacrawl")
+	manifest.Description = "Local-first Slack archive crawler."
+	manifest.Branding = control.Branding{SymbolName: "bubble.left.and.bubble.right", AccentColor: "#36c5f0", BundleIdentifier: "com.tinyspeck.slackmacgap"}
+	manifest.Paths = control.Paths{
+		DefaultConfig:   configPath,
+		ConfigEnv:       "SLACRAWL_CONFIG",
+		DefaultDatabase: defaults.DBPath,
+		DefaultCache:    defaults.CacheDir,
+		DefaultLogs:     defaults.LogDir,
+		DefaultShare:    defaults.Share.RepoPath,
+	}
+	manifest.Capabilities = []string{"metadata", "status", "doctor", "sync", "tap", "tui", "git-share", "sql"}
+	manifest.Privacy = control.Privacy{ContainsPrivateMessages: true, ExportsSecrets: false, LocalOnlyScopes: []string{"slack", "desktop-cache", "sqlite", "git-share"}}
+	manifest.Commands = map[string]control.Command{
+		"status":      {Title: "Status", Argv: []string{"slacrawl", "status", "--json"}, JSON: true},
+		"doctor":      {Title: "Doctor", Argv: []string{"slacrawl", "doctor", "--json"}, JSON: true},
+		"sync":        {Title: "Sync", Argv: []string{"slacrawl", "--json", "sync"}, JSON: true, Mutates: true},
+		"tap":         {Title: "Import desktop cache", Argv: []string{"slacrawl", "--json", "sync", "--source", "desktop"}, JSON: true, Mutates: true},
+		"tui":         {Title: "Terminal browser", Argv: []string{"slacrawl", "tui"}},
+		"tui-json":    {Title: "Terminal browser rows", Argv: []string{"slacrawl", "tui", "--json"}, JSON: true},
+		"publish":     {Title: "Publish share", Argv: []string{"slacrawl", "--json", "publish"}, JSON: true, Mutates: true},
+		"subscribe":   {Title: "Subscribe share", Argv: []string{"slacrawl", "--json", "subscribe"}, JSON: true, Mutates: true},
+		"update":      {Title: "Update share", Argv: []string{"slacrawl", "--json", "update"}, JSON: true, Mutates: true},
+		"legacy-json": {Title: "Legacy JSON flag", Argv: []string{"slacrawl", "--json"}, JSON: true, Legacy: true},
+	}
+	return a.writeOutput("Metadata", manifest, format, false)
 }
 
 func (a *App) runSync(ctx context.Context, configPath string, args []string, format OutputFormat) error {
@@ -345,6 +452,7 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 		LatestOnly:  *latestOnly,
 		Concurrency: *concurrency,
 		AutoJoin:    boolPtr(*autoJoin),
+		Logger:      progressLogger(a.Stderr),
 	}
 	st, err := a.openStore(cfg)
 	if err != nil {
@@ -371,6 +479,20 @@ func (a *App) runSync(ctx context.Context, configPath string, args []string, for
 	return a.writeOutput("Sync", result, format, true)
 }
 
+func progressLogger(w io.Writer) *slog.Logger {
+	if w == nil {
+		w = io.Discard
+	}
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return attr
+		},
+	}))
+}
+
 func (a *App) runSearch(ctx context.Context, configPath string, args []string, format OutputFormat) error {
 	cfg, err := loadConfig(configPath)
 	if err != nil {
@@ -395,6 +517,266 @@ func (a *App) runSearch(ctx context.Context, configPath string, args []string, f
 		return err
 	}
 	return a.writeOutput("Search", results, format, false)
+}
+
+func (a *App) runTUI(ctx context.Context, configPath string, args []string, format OutputFormat) error {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+	fs.Usage = func() {
+		_, _ = fmt.Fprintln(fs.Output(), "Usage of tui:")
+		fs.PrintDefaults()
+		_, _ = fmt.Fprintln(fs.Output())
+		_, _ = fmt.Fprintln(fs.Output(), tui.ControlsHelp())
+	}
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fs.SetOutput(a.Stdout)
+			break
+		}
+	}
+	workspaceID := fs.String("workspace", "", "workspace id")
+	channelID := fs.String("channel", "", "channel id")
+	userID := fs.String("author", "", "user id")
+	limit := fs.Int("limit", 200, "row limit")
+	includeDrafts := fs.Bool("include-drafts", false, "include local desktop draft messages")
+	includeSystem := fs.Bool("include-system", false, "include Slack join/leave/topic system messages")
+	jsonOut := fs.Bool("json", false, "write browser rows as JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if *jsonOut {
+		format = FormatJSON
+	}
+	if fs.NArg() != 0 {
+		return errors.New("tui takes flags only")
+	}
+	if *limit <= 0 {
+		return errors.New("tui --limit must be positive")
+	}
+	cfg, err := loadConfigOrDefault(configPath)
+	if err != nil {
+		return err
+	}
+	loadRows := func(ctx context.Context) ([]tui.Row, error) {
+		st, err := store.OpenReadOnly(cfg.DBPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		defer st.Close()
+		queryLimit := store.RequireLimit(*limit)
+		if !*includeDrafts || !*includeSystem {
+			queryLimit = store.RequireLimit(*limit * 10)
+		}
+		rows, err := st.MessagesWithThreadContext(ctx, coalesce(*workspaceID, cfg.WorkspaceID), *channelID, *userID, queryLimit)
+		if err != nil {
+			return nil, err
+		}
+		return slackTUIRows(rows, *includeDrafts, *includeSystem, *limit), nil
+	}
+	archiveRows, err := loadRows(ctx)
+	if err != nil {
+		return err
+	}
+	return tui.Browse(ctx, tui.BrowseOptions{
+		AppName:        "slacrawl",
+		Title:          "slacrawl archive",
+		EmptyMessage:   "slacrawl has no local messages yet",
+		Rows:           archiveRows,
+		Refresh:        loadRows,
+		JSON:           format == FormatJSON,
+		Layout:         tui.LayoutChat,
+		SourceKind:     archiveSourceKind(cfg.Share.Remote),
+		SourceLocation: archiveSourceLocation(cfg),
+		Stdout:         a.Stdout,
+	})
+}
+
+func archiveSourceKind(remote string) string {
+	if strings.TrimSpace(remote) != "" {
+		return tui.SourceRemote
+	}
+	return tui.SourceLocal
+}
+
+func archiveSourceLocation(cfg config.Config) string {
+	if strings.TrimSpace(cfg.Share.Remote) != "" {
+		return cfg.Share.Remote
+	}
+	return cfg.DBPath
+}
+
+func slackTUIRows(rows []store.MessageRow, includeDrafts bool, includeSystem bool, limit int) []tui.Row {
+	if limit <= 0 {
+		limit = len(rows)
+	}
+	items := make([]tui.Row, 0, len(rows))
+	for _, row := range rows {
+		if !includeDrafts && slackIsDraft(row) {
+			continue
+		}
+		if !includeSystem && slackIsNoisySystem(row) {
+			continue
+		}
+		title := strings.TrimSpace(row.NormalizedText)
+		if title == "" {
+			title = strings.TrimSpace(row.Text)
+		}
+		if title == "" {
+			title = row.ChannelID + " " + row.TS
+		}
+		detail := strings.TrimSpace(row.Text)
+		if detail == "" {
+			detail = row.NormalizedText
+		}
+		readableDetail := strings.TrimSpace(row.NormalizedText)
+		if readableDetail == "" {
+			readableDetail = detail
+		}
+		items = append(items, tui.Row{
+			Source:    "slack",
+			Kind:      "message",
+			ID:        strings.TrimSpace(row.ChannelID + "/" + row.TS),
+			ParentID:  slackParentTS(row),
+			Scope:     slackWorkspaceScope(row),
+			Container: coalesce(row.ChannelName, row.ChannelID),
+			Author:    slackAuthorName(row),
+			Title:     title,
+			Text:      detail,
+			Detail:    readableDetail,
+			URL:       slackMessageURL(row),
+			CreatedAt: formatSlackTimestamp(row.TS),
+			Tags:      []string{row.WorkspaceID, row.ChannelID, row.UserID},
+			Fields: map[string]string{
+				"channel_id":   row.ChannelID,
+				"latest_reply": row.LatestReply,
+				"reply_count":  strconv.Itoa(row.ReplyCount),
+				"subtype":      row.Subtype,
+				"thread":       row.ThreadTS,
+				"ts":           row.TS,
+				"user_id":      row.UserID,
+			},
+		})
+		if len(items) >= limit {
+			break
+		}
+	}
+	return items
+}
+
+func slackIsDraft(row store.MessageRow) bool {
+	return strings.EqualFold(strings.TrimSpace(row.Subtype), "desktop_draft") || strings.HasPrefix(strings.TrimSpace(row.TS), "draft:")
+}
+
+func slackIsNoisySystem(row store.MessageRow) bool {
+	switch strings.ToLower(strings.TrimSpace(row.Subtype)) {
+	case "channel_archive", "channel_join", "channel_leave", "channel_name", "channel_purpose", "channel_topic", "channel_unarchive", "group_join", "group_leave":
+		return true
+	default:
+		return false
+	}
+}
+
+func slackWorkspaceScope(row store.MessageRow) string {
+	name := strings.TrimSpace(row.WorkspaceName)
+	id := strings.TrimSpace(row.WorkspaceID)
+	if name == "" || name == id {
+		return ""
+	}
+	return name
+}
+
+func slackAuthorName(row store.MessageRow) string {
+	if name := strings.TrimSpace(row.UserName); name != "" {
+		return name
+	}
+	if label := slackSourceLabel(row); label != "" {
+		return label
+	}
+	if strings.TrimSpace(row.UserID) != "" {
+		return "Slack user"
+	}
+	return ""
+}
+
+func slackSourceLabel(row store.MessageRow) string {
+	subtype := strings.ToLower(strings.TrimSpace(row.Subtype))
+	if subtype != "" {
+		return "Slack"
+	}
+	text := strings.ToLower(strings.TrimSpace(coalesce(row.NormalizedText, row.Text)))
+	switch {
+	case strings.Contains(text, "new course started"),
+		strings.Contains(text, "course completed"),
+		strings.Contains(text, "new project created"),
+		strings.Contains(text, "new build update"):
+		return "Build Club"
+	}
+	switch strings.ToLower(strings.TrimSpace(row.SourceName)) {
+	case "desktop-indexeddb":
+		return "Slack desktop"
+	case "slack-export":
+		return "Slack export"
+	case "api-bot", "slack-api":
+		return "Slack API"
+	default:
+		return ""
+	}
+}
+
+func slackMessageURL(row store.MessageRow) string {
+	workspaceID := strings.TrimSpace(row.WorkspaceID)
+	channelID := strings.TrimSpace(row.ChannelID)
+	ts := strings.TrimSpace(row.TS)
+	if workspaceID == "" || channelID == "" || ts == "" {
+		return ""
+	}
+	values := url.Values{}
+	values.Set("team", workspaceID)
+	values.Set("id", channelID)
+	values.Set("message", ts)
+	return "slack://channel?" + values.Encode()
+}
+
+func slackParentTS(row store.MessageRow) string {
+	threadTS := strings.TrimSpace(row.ThreadTS)
+	if threadTS == "" || threadTS == strings.TrimSpace(row.TS) {
+		return ""
+	}
+	return threadTS
+}
+
+func formatSlackTimestamp(ts string) string {
+	seconds, fraction, ok := strings.Cut(slackTimestampValue(ts), ".")
+	if !ok || seconds == "" {
+		return ts
+	}
+	sec, err := strconv.ParseInt(seconds, 10, 64)
+	if err != nil {
+		return ts
+	}
+	fraction = (fraction + "000000000")[:9]
+	nsec, err := strconv.ParseInt(fraction, 10, 64)
+	if err != nil {
+		nsec = 0
+	}
+	return time.Unix(sec, nsec).UTC().Format(time.RFC3339Nano)
+}
+
+func slackTimestampValue(ts string) string {
+	value := strings.TrimSpace(ts)
+	if strings.HasPrefix(value, "draft:") {
+		value = strings.TrimPrefix(value, "draft:")
+		if before, _, ok := strings.Cut(value, ":"); ok {
+			return before
+		}
+	}
+	return value
 }
 
 func (a *App) runMessages(ctx context.Context, configPath string, args []string, format OutputFormat) error {
@@ -1174,8 +1556,8 @@ type shareResponse struct {
 	NeedsImport             bool       `json:"needs_import"`
 }
 
-func (a *App) buildShareState(ctx context.Context, cfg config.Config, st *store.Store) (shareResponse, error) {
-	state := shareResponse{
+func shareStateFromConfig(cfg config.Config) shareResponse {
+	return shareResponse{
 		Enabled:    cfg.ShareEnabled(),
 		AutoUpdate: cfg.Share.AutoUpdate,
 		Remote:     cfg.Share.Remote,
@@ -1183,6 +1565,10 @@ func (a *App) buildShareState(ctx context.Context, cfg config.Config, st *store.
 		Branch:     cfg.Share.Branch,
 		StaleAfter: cfg.Share.StaleAfter,
 	}
+}
+
+func (a *App) buildShareState(ctx context.Context, cfg config.Config, st *store.Store) (shareResponse, error) {
+	state := shareStateFromConfig(cfg)
 	syncState, err := share.ReadSyncState(ctx, st)
 	if err != nil {
 		return shareResponse{}, err
@@ -1204,4 +1590,42 @@ func (a *App) buildShareState(ctx context.Context, cfg config.Config, st *store.
 	}
 	state.NeedsImport = share.NeedsImport(ctx, st, staleAfter)
 	return state, nil
+}
+
+func controlStatus(appID, configPath string, cfg config.Config, status store.Status, shareState shareResponse) control.Status {
+	counts := []control.Count{
+		control.NewCount("workspaces", "Workspaces", int64(status.Workspaces)),
+		control.NewCount("channels", "Channels", int64(status.Channels)),
+		control.NewCount("users", "Users", int64(status.Users)),
+		control.NewCount("messages", "Messages", int64(status.Messages)),
+	}
+	summary := fmt.Sprintf("%d messages across %d channels", status.Messages, status.Channels)
+	state := control.NewStatus(appID, summary)
+	state.State = "current"
+	state.ConfigPath = configPath
+	state.DatabasePath = cfg.DBPath
+	state.Counts = counts
+	if !status.LastSyncAt.IsZero() {
+		state.LastSyncAt = status.LastSyncAt.UTC().Format(time.RFC3339)
+	}
+	db := control.SQLiteDatabase("primary", "Slack archive", "archive", cfg.DBPath, true, counts)
+	state.DatabaseBytes = db.Bytes
+	state.WALBytes = fileSize(cfg.DBPath + "-wal")
+	state.Databases = []control.Database{db}
+	state.Share = &control.Share{
+		Enabled:     shareState.Enabled,
+		RepoPath:    shareState.RepoPath,
+		Remote:      shareState.Remote,
+		Branch:      shareState.Branch,
+		NeedsUpdate: shareState.NeedsImport,
+	}
+	return state
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }

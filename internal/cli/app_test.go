@@ -132,7 +132,9 @@ func TestInitStatusAndSQL(t *testing.T) {
 	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--json", "status"}))
 	var status map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &status))
-	require.Equal(t, float64(0), status["messages"])
+	require.Equal(t, "crawlkit.control.v1", status["schema_version"])
+	require.Equal(t, float64(0), statusCount(t, status, "messages"))
+	require.NotEmpty(t, status["databases"])
 
 	stdout.Reset()
 	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--json", "sql", "select count(*) as messages from messages"}))
@@ -145,7 +147,24 @@ func TestInitStatusAndSQL(t *testing.T) {
 	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--format", "json", "status"}))
 	var statusByFormat map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &statusByFormat))
-	require.Equal(t, float64(0), statusByFormat["messages"])
+	require.Equal(t, float64(0), statusCount(t, statusByFormat, "messages"))
+}
+
+func statusCount(t *testing.T, status map[string]any, id string) float64 {
+	t.Helper()
+	counts, ok := status["counts"].([]any)
+	require.True(t, ok)
+	for _, raw := range counts {
+		row, ok := raw.(map[string]any)
+		require.True(t, ok)
+		if row["id"] == id {
+			value, ok := row["value"].(float64)
+			require.True(t, ok)
+			return value
+		}
+	}
+	require.Failf(t, "missing status count", "id %q", id)
+	return 0
 }
 
 func TestDoctorReflectsDisabledSources(t *testing.T) {
@@ -467,6 +486,7 @@ func TestCompletionBashOutput(t *testing.T) {
 	require.Contains(t, out, "complete -F _slacrawl slacrawl")
 	require.Contains(t, out, "completion")
 	require.Contains(t, out, "report")
+	require.Contains(t, out, "tui")
 	require.Contains(t, out, "--format")
 	require.Contains(t, out, "--exclude-channels")
 	require.Contains(t, out, "--auto-join")
@@ -486,10 +506,247 @@ func TestCompletionZshOutput(t *testing.T) {
 	require.Contains(t, out, "#compdef slacrawl")
 	require.Contains(t, out, "_values 'shell' bash zsh")
 	require.Contains(t, out, "report")
+	require.Contains(t, out, "tui")
 	require.Contains(t, out, "--no-color")
 	require.Contains(t, out, "--exclude-channels")
 	require.Contains(t, out, "--auto-join")
 	require.Contains(t, out, "public_channel")
+}
+
+func TestTUIHelpReturnsUsage(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	app := &App{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	require.NoError(t, app.Run(context.Background(), []string{"tui", "--help"}))
+	require.Contains(t, stdout.String(), "Usage of tui:")
+	require.Contains(t, stdout.String(), "-limit")
+	require.Contains(t, stdout.String(), "right-click")
+	require.Contains(t, stdout.String(), "#              jump")
+	require.Empty(t, stderr.String())
+}
+
+func TestStatusJSONUsesDefaultsWhenConfigMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	configPath := filepath.Join(tmp, "missing.toml")
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "status", "--json"}))
+
+	var status map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &status))
+	require.Equal(t, "crawlkit.control.v1", status["schema_version"])
+	require.Equal(t, "slacrawl", status["app_id"])
+	require.NoFileExists(t, configPath)
+}
+
+func TestTUIJSONUsesDefaultsWhenConfigMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	configPath := filepath.Join(tmp, "missing.toml")
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+
+	require.NoError(t, app.Run(context.Background(), []string{"--config", configPath, "tui", "--json"}))
+
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows))
+	require.Empty(t, rows)
+	require.NoFileExists(t, configPath)
+}
+
+func TestTUIJSONListsMessages(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.toml")
+	dbPath := filepath.Join(tmp, "slacrawl.db")
+	ctx := context.Background()
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "init", "--db", dbPath}))
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	require.NoError(t, st.UpsertWorkspace(ctx, store.Workspace{ID: "T1", Name: "team", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertChannel(ctx, store.Channel{ID: "C1", WorkspaceID: "T1", Name: "engineering", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertUser(ctx, store.User{ID: "U1", WorkspaceID: "T1", Name: "alice", DisplayName: "Alice", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertMessage(ctx, store.Message{
+		ChannelID: "C1", TS: "1780000000.000001", WorkspaceID: "T1", UserID: "U1",
+		Text: "<@U1> ship crawlkit tui", NormalizedText: "Alice ship crawlkit tui", SourceRank: 2, SourceName: "api-bot", RawJSON: "{}",
+		UpdatedAt: now,
+	}, nil))
+	require.NoError(t, st.Close())
+
+	before, err := os.ReadFile(dbPath)
+	require.NoError(t, err)
+	stdout.Reset()
+	require.NoError(t, app.Run(ctx, []string{"--config", configPath, "--json", "tui", "--limit", "5"}))
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows))
+	require.NotEmpty(t, rows)
+	require.Equal(t, "Alice ship crawlkit tui", rows[0]["title"])
+	require.Equal(t, "<@U1> ship crawlkit tui", rows[0]["text"])
+	require.Equal(t, "Alice ship crawlkit tui", rows[0]["detail"])
+	require.Equal(t, "2026-05-28T20:26:40.000001Z", rows[0]["created_at"])
+	require.Equal(t, "slack", rows[0]["source"])
+	require.Equal(t, "message", rows[0]["kind"])
+	require.Equal(t, "team", rows[0]["scope"])
+	require.Equal(t, "engineering", rows[0]["container"])
+	require.Equal(t, "Alice", rows[0]["author"])
+	require.Equal(t, "slack://channel?id=C1&message=1780000000.000001&team=T1", rows[0]["url"])
+	require.Empty(t, rows[0]["parent_id"])
+	after, err := os.ReadFile(dbPath)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "tui --json should not mutate the database")
+}
+
+func TestSlackTUIRowsDoNotIndentThreadRoot(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		WorkspaceName:  "team",
+		ChannelID:      "C1",
+		ChannelName:    "engineering",
+		TS:             "1780000000.000001",
+		ThreadTS:       "1780000000.000001",
+		UserID:         "U1",
+		UserName:       "Alice",
+		Text:           "root",
+		NormalizedText: "root",
+		ReplyCount:     2,
+		LatestReply:    "1780000100.000001",
+	}}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Empty(t, rows[0].ParentID)
+	require.Equal(t, "team", rows[0].Scope)
+	require.Equal(t, "engineering", rows[0].Container)
+	require.Equal(t, "Alice", rows[0].Author)
+	require.Equal(t, "root", rows[0].Detail)
+	require.Equal(t, "slack://channel?id=C1&message=1780000000.000001&team=T1", rows[0].URL)
+	require.Equal(t, "2", rows[0].Fields["reply_count"])
+	require.Equal(t, "1780000100.000001", rows[0].Fields["latest_reply"])
+}
+
+func TestSlackTUIRowsHideRawWorkspaceIDsFromScope(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		WorkspaceName:  "T1",
+		ChannelID:      "C1",
+		ChannelName:    "engineering",
+		TS:             "1780000000.000001",
+		Text:           "hello",
+		NormalizedText: "hello",
+	}}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Empty(t, rows[0].Scope)
+	require.Contains(t, rows[0].Tags, "T1")
+}
+
+func TestSlackTUIRowsKeepRawTextAndReadableDetail(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		ChannelID:      "C1",
+		ChannelName:    "engineering",
+		TS:             "1780000000.000001",
+		UserID:         "U1",
+		UserName:       "Alice",
+		Text:           "<@U1> ship crawlkit tui",
+		NormalizedText: "Alice ship crawlkit tui",
+	}}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Equal(t, "<@U1> ship crawlkit tui", rows[0].Text)
+	require.Equal(t, "Alice ship crawlkit tui", rows[0].Detail)
+}
+
+func TestSlackTUIRowsHideUnresolvedUserIDsFromAuthorColumn(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		ChannelID:      "C1",
+		TS:             "1780000000.000001",
+		UserID:         "U081CAHTCTW",
+		Text:           ":books: *New Course Started*",
+		NormalizedText: "New Course Started",
+		SourceName:     "desktop-indexeddb",
+	}}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Equal(t, "Build Club", rows[0].Author)
+	require.Equal(t, "U081CAHTCTW", rows[0].Fields["user_id"])
+}
+
+func TestSlackTUIRowsLabelsUnresolvedDesktopMessages(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID:    "T1",
+		ChannelID:      "C1",
+		TS:             "1780000000.000001",
+		UserID:         "U081CAHTCTW",
+		Text:           "ordinary archive message",
+		NormalizedText: "ordinary archive message",
+		SourceName:     "desktop-indexeddb",
+	}}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Equal(t, "Slack desktop", rows[0].Author)
+	require.Equal(t, "U081CAHTCTW", rows[0].Fields["user_id"])
+}
+
+func TestSlackTUIRowsNormalizeDraftTimestamps(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{{
+		WorkspaceID: "T1",
+		ChannelID:   "C1",
+		TS:          "draft:1776788414.770369:C0AQ7TZR9KP-1776788221.127409",
+		UserName:    "Alice",
+		Text:        "draft text",
+	}}, true, false, 10)
+	require.Len(t, rows, 1)
+	require.Equal(t, "2026-04-21T16:20:14.770369Z", rows[0].CreatedAt)
+}
+
+func TestSlackTUIRowsSkipDesktopDraftsByDefault(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{
+		{
+			WorkspaceID: "T1",
+			ChannelID:   "C1",
+			TS:          "draft:1776788414.770369:C1",
+			Subtype:     "desktop_draft",
+			UserName:    "Alice",
+			Text:        "draft text",
+		},
+		{
+			WorkspaceID: "T1",
+			ChannelID:   "C1",
+			TS:          "1780000000.000001",
+			UserName:    "Alice",
+			Text:        "real message",
+		},
+	}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Equal(t, "real message", rows[0].Title)
+}
+
+func TestSlackTUIRowsSkipNoisySystemMessagesByDefault(t *testing.T) {
+	rows := slackTUIRows([]store.MessageRow{
+		{
+			WorkspaceID: "T1",
+			ChannelID:   "C1",
+			TS:          "1780000000.000001",
+			UserName:    "Alice",
+			Subtype:     "channel_join",
+			Text:        "Alice has joined the channel",
+		},
+		{
+			WorkspaceID: "T1",
+			ChannelID:   "C1",
+			TS:          "1780000001.000001",
+			UserName:    "Bob",
+			Text:        "actual conversation",
+		},
+	}, false, false, 10)
+	require.Len(t, rows, 1)
+	require.Equal(t, "actual conversation", rows[0].Title)
 }
 
 func TestReportIncludesArchiveAndShareState(t *testing.T) {

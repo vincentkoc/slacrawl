@@ -80,6 +80,69 @@ func TestUpsertMessageDeduplicatesMentions(t *testing.T) {
 	require.Equal(t, int64(1), rows[0]["n"])
 }
 
+func TestMessagesResolveMentionDisplayNames(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, s.UpsertUser(ctx, User{
+		ID:          "U1",
+		WorkspaceID: "other-workspace",
+		Name:        "alice",
+		DisplayName: "Alice Example",
+		RawJSON:     "{}",
+		UpdatedAt:   now,
+	}))
+	require.NoError(t, s.UpsertMessage(ctx, Message{
+		ChannelID:      "C1",
+		TS:             "123.45",
+		WorkspaceID:    "T1",
+		Text:           "<@U1> please check this",
+		NormalizedText: "@U1 please check this",
+		SourceRank:     2,
+		SourceName:     "api-bot",
+		RawJSON:        "{}",
+		UpdatedAt:      now,
+	}, []Mention{{Type: "user", TargetID: "U1", DisplayText: "U1"}}))
+
+	rows, err := s.Messages(ctx, "T1", "", "", 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "@Alice Example please check this", rows[0].NormalizedText)
+	require.Equal(t, "<@U1> please check this", rows[0].Text)
+}
+
+func TestMessagesWithThreadContextHydratesOlderRoot(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, s.UpsertWorkspace(ctx, Workspace{ID: "T1", Name: "team", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertChannel(ctx, Channel{ID: "C1", WorkspaceID: "T1", Name: "eng", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertMessage(ctx, Message{
+		ChannelID: "C1", TS: "1000.000001", WorkspaceID: "T1", UserID: "U1",
+		ThreadTS: "1000.000001", Text: "root", NormalizedText: "root", ReplyCount: 1, LatestReply: "2000.000001",
+		SourceRank: 2, SourceName: "api-bot", RawJSON: "{}", UpdatedAt: now,
+	}, nil))
+	require.NoError(t, s.UpsertMessage(ctx, Message{
+		ChannelID: "C1", TS: "2000.000001", WorkspaceID: "T1", UserID: "U2",
+		ThreadTS: "1000.000001", Text: "reply", NormalizedText: "reply",
+		SourceRank: 2, SourceName: "api-bot", RawJSON: "{}", UpdatedAt: now,
+	}, nil))
+
+	rows, err := s.MessagesWithThreadContext(ctx, "T1", "", "", 1)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Equal(t, "2000.000001", rows[0].TS)
+	require.Equal(t, "1000.000001", rows[1].TS)
+}
+
 func TestWorkspaceFiltersApplyToReadQueries(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	s, err := Open(dbPath)
@@ -143,6 +206,37 @@ func TestWorkspaceFiltersApplyToReadQueries(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, channels, 1)
 	require.Equal(t, "T1", channels[0].WorkspaceID)
+}
+
+func TestMessagesResolveUserNamesBySlackUserID(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, s.UpsertWorkspace(ctx, Workspace{ID: "T1", Name: "one", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertWorkspace(ctx, Workspace{ID: "T2", Name: "two", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertChannel(ctx, Channel{ID: "C2", WorkspaceID: "T2", Name: "ops", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertUser(ctx, User{ID: "U-global", WorkspaceID: "T1", Name: "fallback", DisplayName: "Global User", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, s.UpsertMessage(ctx, Message{
+		ChannelID:      "C2",
+		TS:             "2.0",
+		WorkspaceID:    "T2",
+		UserID:         "U-global",
+		Text:           "hello",
+		NormalizedText: "hello",
+		SourceRank:     2,
+		SourceName:     "api-bot",
+		RawJSON:        "{}",
+		UpdatedAt:      now,
+	}, nil))
+
+	messages, err := s.Messages(ctx, "T2", "", "", 10)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Equal(t, "Global User", messages[0].UserName)
 }
 
 func TestOpenStampsSchemaVersion(t *testing.T) {

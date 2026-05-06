@@ -64,7 +64,7 @@ jobs:
             depends_on "go" => :build
 
             def install
-              system "go", "build", *std_go_args(ldflags: "-s -w"), "./cmd/slacrawl"
+              system "go", "build", *std_go_args(ldflags: "-s -w -X github.com/vincentkoc/slacrawl/internal/cli.version=#{version}"), "./cmd/slacrawl"
               pkgshare.install "config.example.toml"
               doc.install "README.md", "LICENSE", "SPEC.md"
             end

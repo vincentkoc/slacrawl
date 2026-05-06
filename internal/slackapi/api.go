@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+	"github.com/vincentkoc/crawlkit/progress"
 
 	"github.com/vincentkoc/slacrawl/internal/config"
 	"github.com/vincentkoc/slacrawl/internal/search"
@@ -68,6 +70,7 @@ type Client struct {
 	sleep        func(context.Context, time.Duration) error
 	now          func() time.Time
 	socketModeFn func(*slack.Client) socketModeRunner
+	logger       *slog.Logger
 }
 
 func New(tokens config.Tokens) *Client {
@@ -111,6 +114,11 @@ func NewWithOptions(tokens config.Tokens, apiURL string, httpClient *http.Client
 
 func (c *Client) WithIncludeDMs(include bool) *Client {
 	c.includeDMs = include
+	return c
+}
+
+func (c *Client) WithLogger(logger *slog.Logger) *Client {
+	c.logger = logger
 	return c
 }
 
@@ -806,15 +814,25 @@ func (c *Client) syncChannelsWithSource(ctx context.Context, st *store.Store, wo
 	if workerCount > len(channels) {
 		workerCount = len(channels)
 	}
+	tracker := progress.New(c.logger, progress.Options{
+		Name:  "sync",
+		Unit:  "channels",
+		Total: int64(len(channels)),
+		Attrs: []any{"workspace_id", workspaceID, "source", source.sourceName},
+	})
 	if workerCount == 1 {
 		for _, channel := range channels {
 			if err := st.UpsertChannel(ctx, toStoreChannel(workspaceID, channel, now)); err != nil {
+				tracker.Finish(err)
 				return err
 			}
 			if err := c.syncChannelMessagesWithSource(ctx, st, workspaceID, channel, oldestByChannel[channel.ID], now, userRepliesAvailable, source); err != nil {
+				tracker.Finish(err)
 				return err
 			}
+			tracker.Add(1, "channel_id", channel.ID, "channel_name", channel.Name)
 		}
+		tracker.Finish(nil)
 		return nil
 	}
 
@@ -843,6 +861,7 @@ func (c *Client) syncChannelsWithSource(ctx context.Context, st *store.Store, wo
 				cancel()
 				return
 			}
+			tracker.Add(1, "channel_id", channel.ID, "channel_name", channel.Name)
 		}
 	}
 	for i := 0; i < workerCount; i++ {
@@ -856,11 +875,14 @@ func (c *Client) syncChannelsWithSource(ctx context.Context, st *store.Store, wo
 			wg.Wait()
 			select {
 			case err := <-errCh:
+				tracker.Finish(err)
 				return err
 			default:
 				if ctx.Err() != nil && !errors.Is(ctx.Err(), context.Canceled) {
+					tracker.Finish(ctx.Err())
 					return ctx.Err()
 				}
+				tracker.Finish(nil)
 				return nil
 			}
 		case workCh <- channel:
@@ -871,11 +893,14 @@ func (c *Client) syncChannelsWithSource(ctx context.Context, st *store.Store, wo
 
 	select {
 	case err := <-errCh:
+		tracker.Finish(err)
 		return err
 	default:
 		if ctx.Err() != nil && !errors.Is(ctx.Err(), context.Canceled) {
+			tracker.Finish(ctx.Err())
 			return ctx.Err()
 		}
+		tracker.Finish(nil)
 		return nil
 	}
 }

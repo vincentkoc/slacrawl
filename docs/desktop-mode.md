@@ -4,6 +4,10 @@ Desktop mode lets `slacrawl` ingest local Slack Desktop state into SQLite withou
 
 This path is read-only. It snapshots Slack Desktop artifacts, parses supported local state, and upserts what it can recover into the database.
 
+Desktop snapshots use shared safe read-only cache helpers where possible.
+Slack-specific IndexedDB/Local Storage parsing and merge policy remain in
+`slacrawl`, and the tool never writes to Slack application storage.
+
 ## What Desktop Mode Ingests
 
 Today the desktop adapter can ingest:
