@@ -7,7 +7,7 @@ require (
 	github.com/slack-go/slack v0.17.3
 	github.com/stretchr/testify v1.11.1
 	github.com/syndtr/goleveldb v1.0.0
-	golang.org/x/text v0.3.8
+	golang.org/x/text v0.36.0
 )
 
 require (
