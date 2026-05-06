@@ -1,29 +1,46 @@
 ---
 name: slacrawl
-description: Use for local Slack archive search, desktop/API sync, threads/DMs, and Slacrawl repo work.
+description: Use for local Slack archive search, sync freshness, channels/messages/mentions, desktop/API/git-share sources, TUI browsing, and Slacrawl repo/release work.
 ---
 
 # Slacrawl
 
-Use local Slack archive data first. API sync/full threads/DMs require Slack tokens; desktop mode can work without tokens.
+Use local Slack archive data first for Slack questions. Hit Slack APIs only
+when the archive is stale, missing the requested scope, or the user asks for
+current external context.
 
 ## Sources
 
 - DB: `~/.slacrawl/slacrawl.db`
-- Repo: `~/Projects/slacrawl`
-- CLI: `slacrawl`
-- Typo shim: `slacawl`
+- Config: `~/.slacrawl/config.toml`
+- Cache: `~/.slacrawl/cache`
+- Logs: `~/.slacrawl/logs`
+- Git share repo: `~/.slacrawl/share`
+- Repo: `~/GIT/_Perso/slacrawl`
+- Preferred CLI: `slacrawl`; fallback to `go run ./cmd/slacrawl` from the repo if the installed binary is stale
 
 ## Freshness
 
-For recent/current Slack questions:
+For recent/current questions, check freshness before analysis:
 
 ```bash
-slacrawl doctor
 slacrawl status --json
 ```
 
-Desktop-only refresh:
+For precise freshness from the default database:
+
+```bash
+sqlite3 ~/.slacrawl/slacrawl.db \
+  "select coalesce(max(updated_at), '') from sync_state where source_name != 'doctor';"
+```
+
+Routine diagnostics:
+
+```bash
+slacrawl doctor
+```
+
+Desktop-local refresh:
 
 ```bash
 slacrawl sync --source desktop
@@ -48,22 +65,36 @@ Common commands:
 
 ```bash
 slacrawl search "query"
-slacrawl messages --since 7d --limit 50
+slacrawl messages --limit 50
+slacrawl channels --json
+slacrawl users --json
+slacrawl mentions --limit 50
 slacrawl sql 'select count(*) from messages;'
 ```
 
+When the installed CLI lacks a new feature, build or run from
+`~/GIT/_Perso/slacrawl` before concluding the feature is missing.
+
+## Slack Boundaries
+
+API sync requires configured Slack tokens; do not invent token availability.
+User tokens are needed for fuller historical threads, DMs, and MPIMs. Desktop
+mode reads local Slack Desktop artifacts and must not write to Slack
+application storage. Git-share snapshots must not include secrets.
+
 ## Verification
 
-For repo edits:
+For repo edits, prefer existing Go gates:
 
 ```bash
-go test ./...
+GOWORK=off go test ./...
 make test
 ```
 
-Use a small CLI smoke such as:
+Then run targeted CLI smoke for the touched surface, for example:
 
 ```bash
 slacrawl doctor
-slacrawl search test --limit 5
+slacrawl status --json
+slacrawl search "test"
 ```

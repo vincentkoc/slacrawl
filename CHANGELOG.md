@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a repo-local `slacrawl` agent skill for local Slack archive, freshness,
+  query, and verification workflows.
 - Replace the single validation workflow with CI jobs for dependencies,
   formatting/vet, tests, CLI control-surface smoke checks, and GoReleaser
   snapshot builds.
